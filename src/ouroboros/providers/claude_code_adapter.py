@@ -222,20 +222,26 @@ class ClaudeCodeAdapter:
                 )
             )
 
-        # Build prompt from messages
-        prompt = self._build_prompt(messages)
+        # Extract system messages and pass as system_prompt (not embedded in user prompt)
+        system_msgs = [m for m in messages if m.role == MessageRole.SYSTEM]
+        non_system_msgs = [m for m in messages if m.role != MessageRole.SYSTEM]
+        system_prompt = system_msgs[0].content if system_msgs else None
+
+        # Build prompt from non-system messages only
+        prompt = self._build_prompt(non_system_msgs)
 
         log.debug(
             "claude_code_adapter.request_started",
             prompt_preview=prompt[:100],
             message_count=len(messages),
+            has_system_prompt=system_prompt is not None,
         )
 
         last_error: ProviderError | None = None
 
         for attempt in range(_MAX_RETRIES):
             try:
-                result = await self._execute_single_request(prompt, config)
+                result = await self._execute_single_request(prompt, config, system_prompt=system_prompt)
 
                 if result.is_ok:
                     if attempt > 0:
@@ -315,6 +321,8 @@ class ClaudeCodeAdapter:
         self,
         prompt: str,
         config: CompletionConfig,
+        *,
+        system_prompt: str | None = None,
     ) -> Result[CompletionResponse, ProviderError]:
         """Execute a single SDK request without retry logic.
 
@@ -324,6 +332,8 @@ class ClaudeCodeAdapter:
         Args:
             prompt: The formatted prompt string.
             config: Configuration for the completion request.
+            system_prompt: Optional system prompt to pass as an authoritative
+                system instruction (not embedded in the user prompt).
 
         Returns:
             Result containing either the completion response or a ProviderError.
@@ -383,6 +393,10 @@ class ClaudeCodeAdapter:
                 model = None
             if model:
                 options_kwargs["model"] = model
+
+        # Pass system prompt as authoritative instruction (matches adapter.py:281-282 pattern)
+        if system_prompt:
+            options_kwargs["system_prompt"] = system_prompt
 
         # Pass structured output format if requested
         # SDK expects: output_format={"type": "json_schema", "schema": {...}}
@@ -572,6 +586,12 @@ class ClaudeCodeAdapter:
 
         for msg in messages:
             if msg.role == MessageRole.SYSTEM:
+                # System messages should be extracted before _build_prompt() is called
+                # and passed via system_prompt parameter. Log a warning if one leaks through.
+                log.warning(
+                    "claude_code_adapter.system_message_in_build_prompt",
+                    hint="System messages should be extracted before calling _build_prompt()",
+                )
                 parts.append(f"<system>\n{msg.content}\n</system>\n")
             elif msg.role == MessageRole.USER:
                 parts.append(f"User: {msg.content}\n")
