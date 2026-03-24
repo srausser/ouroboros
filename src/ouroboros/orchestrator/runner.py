@@ -1787,6 +1787,8 @@ class OrchestratorRunner:
             SessionStatus.CANCELLED,
             SessionStatus.FAILED,
         ):
+            if self._task_workspace is not None:
+                release_lock(self._task_workspace.lock_path)
             return Result.err(
                 OrchestratorError(
                     message=f"Session is in terminal state {tracker.status.value}, cannot resume",

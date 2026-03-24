@@ -20,7 +20,13 @@ from ouroboros.core.errors import ValidationError
 from ouroboros.core.security import InputValidator
 from ouroboros.core.seed import Seed
 from ouroboros.core.types import Result
-from ouroboros.core.worktree import TaskWorkspace, WorktreeError, prepare_task_workspace, release_lock, restore_task_workspace
+from ouroboros.core.worktree import (
+    TaskWorkspace,
+    WorktreeError,
+    maybe_prepare_task_workspace,
+    maybe_restore_task_workspace,
+    release_lock,
+)
 from ouroboros.mcp.errors import MCPServerError, MCPToolError
 from ouroboros.mcp.job_manager import JobLinks, JobManager
 from ouroboros.mcp.types import (
@@ -324,10 +330,11 @@ class ExecuteSeedHandler:
                         )
                     persisted = TaskWorkspace.from_progress_dict(tracker.progress.get("workspace"))
                     try:
-                        workspace = restore_task_workspace(
+                        workspace = maybe_restore_task_workspace(
                             session_id,
                             persisted,
                             fallback_source_cwd=resolved_cwd,
+                            allow_dirty=inherited_runtime_handle is not None,
                         )
                     except WorktreeError as e:
                         return Result.err(
@@ -338,7 +345,7 @@ class ExecuteSeedHandler:
                         )
                 else:
                     try:
-                        workspace = prepare_task_workspace(
+                        workspace = maybe_prepare_task_workspace(
                             resolved_cwd,
                             session_id,
                             allow_dirty=inherited_runtime_handle is not None,

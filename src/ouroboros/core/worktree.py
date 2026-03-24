@@ -102,6 +102,11 @@ def _stale_after() -> timedelta:
     return timedelta(minutes=minutes)
 
 
+def _worktrees_enabled() -> bool:
+    config = _orchestrator_config()
+    return getattr(config, "use_worktrees", True)
+
+
 def _run_git(args: list[str], cwd: Path) -> str:
     try:
         result = subprocess.run(
@@ -128,6 +133,13 @@ def _resolve_repo_root(start_path: Path) -> Path:
     probe = path if path.is_dir() else path.parent
     repo_root = _run_git(["rev-parse", "--show-toplevel"], probe)
     return Path(repo_root).resolve()
+
+
+def _resolve_common_repo_root(start_path: Path) -> Path:
+    path = start_path.expanduser().resolve()
+    probe = path if path.is_dir() else path.parent
+    common_dir = _run_git(["rev-parse", "--path-format=absolute", "--git-common-dir"], probe)
+    return Path(common_dir).resolve().parent
 
 
 def _relative_subdir(repo_root: Path, cwd: Path) -> Path:
@@ -387,6 +399,7 @@ def restore_task_workspace(
     persisted: TaskWorkspace | None,
     *,
     fallback_source_cwd: str | Path | None = None,
+    allow_dirty: bool = False,
 ) -> TaskWorkspace:
     """Restore an existing task worktree or bootstrap it from fallback cwd."""
     if persisted is not None:
@@ -411,11 +424,13 @@ def restore_task_workspace(
     matches = list(root.glob(f"*/{durable_id}"))
     if len(matches) == 1:
         worktree_path = matches[0].resolve()
-        repo_root = worktree_path
+        repo_root = _resolve_common_repo_root(worktree_path)
         repo_name = worktree_path.parent.name
         branch = f"ooo/{durable_id}"
         lock = _lock_path(repo_name, durable_id)
-        source_dir = Path(fallback_source_cwd).expanduser().resolve() if fallback_source_cwd else worktree_path
+        source_dir = (
+            Path(fallback_source_cwd).expanduser().resolve() if fallback_source_cwd else worktree_path
+        )
         effective_cwd = worktree_path
         try:
             original_repo_root = _resolve_repo_root(source_dir)
@@ -451,4 +466,34 @@ def restore_task_workspace(
             details={"durable_id": durable_id},
         )
 
-    return prepare_task_workspace(fallback_source_cwd, durable_id)
+    return prepare_task_workspace(fallback_source_cwd, durable_id, allow_dirty=allow_dirty)
+
+
+def maybe_prepare_task_workspace(
+    source_cwd: str | Path,
+    durable_id: str,
+    *,
+    allow_dirty: bool = False,
+) -> TaskWorkspace | None:
+    """Provision a task workspace only when worktrees are enabled."""
+    if not _worktrees_enabled():
+        return None
+    return prepare_task_workspace(source_cwd, durable_id, allow_dirty=allow_dirty)
+
+
+def maybe_restore_task_workspace(
+    durable_id: str,
+    persisted: TaskWorkspace | None,
+    *,
+    fallback_source_cwd: str | Path | None = None,
+    allow_dirty: bool = False,
+) -> TaskWorkspace | None:
+    """Restore or bootstrap a task workspace when worktrees are enabled."""
+    if persisted is None and not _worktrees_enabled():
+        return None
+    return restore_task_workspace(
+        durable_id,
+        persisted,
+        fallback_source_cwd=fallback_source_cwd,
+        allow_dirty=allow_dirty,
+    )

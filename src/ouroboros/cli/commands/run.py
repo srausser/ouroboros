@@ -21,7 +21,12 @@ if TYPE_CHECKING:
 from ouroboros.cli.formatters import console
 from ouroboros.cli.formatters.panels import print_error, print_info, print_success, print_warning
 from ouroboros.core.security import InputValidator
-from ouroboros.core.worktree import TaskWorkspace, WorktreeError, prepare_task_workspace, restore_task_workspace
+from ouroboros.core.worktree import (
+    TaskWorkspace,
+    WorktreeError,
+    maybe_prepare_task_workspace,
+    maybe_restore_task_workspace,
+)
 
 
 class _DefaultWorkflowGroup(typer.core.TyperGroup):
@@ -227,7 +232,7 @@ async def _run_orchestrator(
             persisted = TaskWorkspace.from_progress_dict(
                 reconstructed.value.progress.get("workspace")
             )
-            workspace = restore_task_workspace(
+            workspace = maybe_restore_task_workspace(
                 resume_session,
                 persisted,
                 fallback_source_cwd=Path.cwd(),
@@ -237,7 +242,7 @@ async def _run_orchestrator(
         else:
             session_id_for_run = f"orch_{uuid4().hex[:12]}"
             execution_id = f"exec_{uuid4().hex[:12]}"
-            workspace = prepare_task_workspace(Path.cwd(), session_id_for_run)
+            workspace = maybe_prepare_task_workspace(Path.cwd(), session_id_for_run)
     except WorktreeError as e:
         print_error(f"Task workspace error: {e.message}")
         raise typer.Exit(1) from e
