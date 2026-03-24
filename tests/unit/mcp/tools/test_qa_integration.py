@@ -137,14 +137,7 @@ class TestExecuteSeedHandlerQA:
             patch("ouroboros.mcp.tools.execution_handlers.create_agent_runtime"),
             patch("ouroboros.mcp.tools.execution_handlers.EventStore") as mock_es_cls,
             patch(
-<<<<<<< HEAD
                 "ouroboros.mcp.tools.execution_handlers.OrchestratorRunner",
-=======
-                "ouroboros.mcp.tools.definitions.maybe_prepare_task_workspace", return_value=None
-            ),
-            patch(
-                "ouroboros.mcp.tools.definitions.OrchestratorRunner",
->>>>>>> a809cb3 (Fix evolve-step workspace cleanup)
                 return_value=mock_runner,
             ),
             patch(
@@ -185,14 +178,7 @@ class TestExecuteSeedHandlerQA:
             patch("ouroboros.mcp.tools.execution_handlers.create_agent_runtime"),
             patch("ouroboros.mcp.tools.execution_handlers.EventStore") as mock_es_cls,
             patch(
-<<<<<<< HEAD
                 "ouroboros.mcp.tools.execution_handlers.OrchestratorRunner",
-=======
-                "ouroboros.mcp.tools.definitions.maybe_prepare_task_workspace", return_value=None
-            ),
-            patch(
-                "ouroboros.mcp.tools.definitions.OrchestratorRunner",
->>>>>>> a809cb3 (Fix evolve-step workspace cleanup)
                 return_value=mock_runner,
             ),
             patch(
@@ -223,14 +209,7 @@ class TestExecuteSeedHandlerQA:
             patch("ouroboros.mcp.tools.execution_handlers.create_agent_runtime"),
             patch("ouroboros.mcp.tools.execution_handlers.EventStore") as mock_es_cls,
             patch(
-<<<<<<< HEAD
                 "ouroboros.mcp.tools.execution_handlers.OrchestratorRunner",
-=======
-                "ouroboros.mcp.tools.definitions.maybe_prepare_task_workspace", return_value=None
-            ),
-            patch(
-                "ouroboros.mcp.tools.definitions.OrchestratorRunner",
->>>>>>> a809cb3 (Fix evolve-step workspace cleanup)
                 return_value=mock_runner,
             ),
             patch(
@@ -266,14 +245,7 @@ class TestExecuteSeedHandlerQA:
             patch("ouroboros.mcp.tools.execution_handlers.create_agent_runtime"),
             patch("ouroboros.mcp.tools.execution_handlers.EventStore") as mock_es_cls,
             patch(
-<<<<<<< HEAD
                 "ouroboros.mcp.tools.execution_handlers.OrchestratorRunner",
-=======
-                "ouroboros.mcp.tools.definitions.maybe_prepare_task_workspace", return_value=None
-            ),
-            patch(
-                "ouroboros.mcp.tools.definitions.OrchestratorRunner",
->>>>>>> a809cb3 (Fix evolve-step workspace cleanup)
                 return_value=mock_runner,
             ),
             patch(
@@ -363,11 +335,17 @@ class TestEvolveStepHandlerQA:
 
         handler = EvolveStepHandler(evolutionary_loop=mock_loop)
 
-        with patch(
-            "ouroboros.mcp.tools.qa.QAHandler.handle",
-            new_callable=AsyncMock,
-            return_value=FAKE_QA_RESULT,
-        ) as mock_qa:
+        with (
+            patch(
+                "ouroboros.mcp.tools.definitions.maybe_restore_task_workspace",
+                return_value=None,
+            ),
+            patch(
+                "ouroboros.mcp.tools.qa.QAHandler.handle",
+                new_callable=AsyncMock,
+                return_value=FAKE_QA_RESULT,
+            ) as mock_qa,
+        ):
             result = await handler.handle(
                 {
                     "lineage_id": "lin_test",
@@ -398,10 +376,16 @@ class TestEvolveStepHandlerQA:
 
         handler = EvolveStepHandler(evolutionary_loop=mock_loop)
 
-        with patch(
-            "ouroboros.mcp.tools.qa.QAHandler.handle",
-            new_callable=AsyncMock,
-        ) as mock_qa:
+        with (
+            patch(
+                "ouroboros.mcp.tools.definitions.maybe_restore_task_workspace",
+                return_value=None,
+            ),
+            patch(
+                "ouroboros.mcp.tools.qa.QAHandler.handle",
+                new_callable=AsyncMock,
+            ) as mock_qa,
+        ):
             result = await handler.handle(
                 {
                     "lineage_id": "lin_test",
@@ -448,11 +432,17 @@ class TestEvolveStepHandlerQA:
 
         handler = EvolveStepHandler(evolutionary_loop=mock_loop)
 
-        with patch(
-            "ouroboros.mcp.tools.qa.QAHandler.handle",
-            new_callable=AsyncMock,
-            return_value=FAKE_QA_RESULT,
-        ) as mock_qa:
+        with (
+            patch(
+                "ouroboros.mcp.tools.definitions.maybe_restore_task_workspace",
+                return_value=None,
+            ),
+            patch(
+                "ouroboros.mcp.tools.qa.QAHandler.handle",
+                new_callable=AsyncMock,
+                return_value=FAKE_QA_RESULT,
+            ) as mock_qa,
+        ):
             await handler.handle(
                 {
                     "lineage_id": "lin_test",
@@ -475,11 +465,17 @@ class TestEvolveStepHandlerQA:
 
         handler = EvolveStepHandler(evolutionary_loop=mock_loop)
 
-        with patch(
-            "ouroboros.mcp.tools.qa.QAHandler.handle",
-            new_callable=AsyncMock,
-            return_value=FAKE_QA_RESULT,
-        ) as mock_qa:
+        with (
+            patch(
+                "ouroboros.mcp.tools.definitions.maybe_restore_task_workspace",
+                return_value=None,
+            ),
+            patch(
+                "ouroboros.mcp.tools.qa.QAHandler.handle",
+                new_callable=AsyncMock,
+                return_value=FAKE_QA_RESULT,
+            ) as mock_qa,
+        ):
             await handler.handle(
                 {
                     "lineage_id": "lin_test",

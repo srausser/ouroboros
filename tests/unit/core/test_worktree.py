@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
 from unittest.mock import patch
 
 import pytest
@@ -10,8 +11,11 @@ import pytest
 from ouroboros.core.worktree import (
     TaskWorkspace,
     WorktreeError,
+    _acquire_lock,
+    _branch_exists,
     maybe_prepare_task_workspace,
     maybe_restore_task_workspace,
+    prepare_task_workspace,
     restore_task_workspace,
 )
 
@@ -251,3 +255,44 @@ class TestRestoreTaskWorkspace:
                     )
 
         prepare_mock.assert_not_called()
+
+
+class TestWorktreeHardening:
+    """Tests for malformed lock and invalid durable-id handling."""
+
+    def test_acquire_lock_raises_worktree_error_for_malformed_lock_file(
+        self, tmp_path: Path
+    ) -> None:
+        workspace = _workspace(tmp_path)
+        lock_path = Path(workspace.lock_path)
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        lock_path.write_text("{not-json")
+
+        with pytest.raises(WorktreeError, match="Invalid task workspace lock file"):
+            _acquire_lock(lock_path, workspace)
+
+    def test_branch_exists_normalizes_git_invocation_failures(self, tmp_path: Path) -> None:
+        with patch(
+            "ouroboros.core.worktree.subprocess.run",
+            side_effect=OSError("spawn failed"),
+        ):
+            with pytest.raises(WorktreeError, match="Git command failed"):
+                _branch_exists(tmp_path, "ooo/orch_test")
+
+    def test_prepare_task_workspace_rejects_invalid_durable_id(self, tmp_path: Path) -> None:
+        repo_root = tmp_path / "repo"
+        repo_root.mkdir()
+        invalid_branch = subprocess.CompletedProcess(
+            args=["git", "check-ref-format"],
+            returncode=1,
+            stdout="",
+            stderr="invalid branch name",
+        )
+
+        with (
+            patch("ouroboros.core.worktree._resolve_repo_root", return_value=repo_root),
+            patch("ouroboros.core.worktree._ensure_clean_checkout"),
+            patch("ouroboros.core.worktree._run_git_process", return_value=invalid_branch),
+        ):
+            with pytest.raises(WorktreeError, match="Invalid durable task identifier"):
+                prepare_task_workspace(repo_root, "bad id")

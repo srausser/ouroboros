@@ -107,9 +107,9 @@ def _worktrees_enabled() -> bool:
     return getattr(config, "use_worktrees", True)
 
 
-def _run_git(args: list[str], cwd: Path) -> str:
+def _run_git_process(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
     try:
-        result = subprocess.run(
+        return subprocess.run(
             ["git", *args],
             cwd=cwd,
             capture_output=True,
@@ -120,6 +120,9 @@ def _run_git(args: list[str], cwd: Path) -> str:
     except (FileNotFoundError, OSError, subprocess.TimeoutExpired) as exc:
         raise WorktreeError(f"Git command failed: {' '.join(args)}", details={"error": str(exc)})
 
+
+def _run_git(args: list[str], cwd: Path) -> str:
+    result = _run_git_process(args, cwd)
     if result.returncode != 0:
         raise WorktreeError(
             f"Git command failed: {' '.join(args)}",
@@ -212,15 +215,26 @@ def _list_worktrees(repo_root: Path) -> dict[str, dict[str, str]]:
 
 
 def _branch_exists(repo_root: Path, branch: str) -> bool:
-    result = subprocess.run(
-        ["git", "show-ref", "--verify", "--quiet", f"refs/heads/{branch}"],
-        cwd=repo_root,
-        capture_output=True,
-        text=True,
-        timeout=30,
-        check=False,
+    result = _run_git_process(
+        ["show-ref", "--verify", "--quiet", f"refs/heads/{branch}"],
+        repo_root,
     )
     return result.returncode == 0
+
+
+def _managed_branch_name(repo_root: Path, durable_id: str) -> str:
+    branch = f"ooo/{durable_id}"
+    result = _run_git_process(["check-ref-format", "--branch", branch], repo_root)
+    if result.returncode != 0:
+        raise WorktreeError(
+            "Invalid durable task identifier for git worktree",
+            details={
+                "durable_id": durable_id,
+                "branch": branch,
+                "stderr": result.stderr.strip(),
+            },
+        )
+    return branch
 
 
 def _repair_managed_path(repo_root: Path, worktree_path: Path) -> None:
@@ -313,7 +327,13 @@ def _is_lock_stale(data: dict[str, Any]) -> bool:
 def _acquire_lock(lock_path: Path, workspace: TaskWorkspace) -> dict[str, Any]:
     with file_lock(lock_path):
         if lock_path.exists():
-            existing = json.loads(lock_path.read_text())
+            try:
+                existing = json.loads(lock_path.read_text())
+            except (OSError, json.JSONDecodeError) as exc:
+                raise WorktreeError(
+                    "Invalid task workspace lock file",
+                    details={"lock_path": str(lock_path), "error": str(exc)},
+                ) from exc
             if isinstance(existing, dict) and existing and not _is_lock_stale(existing):
                 raise WorktreeError(
                     "Task already active",
@@ -387,7 +407,7 @@ def prepare_task_workspace(
         _ensure_clean_checkout(repo_root)
 
     repo_name = repo_root.name
-    branch = f"ooo/{durable_id}"
+    branch = _managed_branch_name(repo_root, durable_id)
     worktree_path = _worktree_root() / repo_name / durable_id
     effective_cwd = worktree_path / _relative_subdir(repo_root, source_path)
     _ensure_worktree(repo_root, worktree_path, branch)
@@ -475,7 +495,7 @@ def restore_task_workspace(
     if len(repo_matches) == 1:
         worktree_path, repo_root = repo_matches[0]
         repo_name = worktree_path.parent.name
-        branch = f"ooo/{durable_id}"
+        branch = _managed_branch_name(repo_root, durable_id)
         lock = _lock_path(repo_name, durable_id)
         effective_cwd = worktree_path / _relative_subdir(caller_repo_root, source_dir)
         workspace = TaskWorkspace(
