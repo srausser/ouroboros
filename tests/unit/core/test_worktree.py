@@ -5,8 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from ouroboros.core.worktree import (
     TaskWorkspace,
+    WorktreeError,
     maybe_prepare_task_workspace,
     maybe_restore_task_workspace,
     restore_task_workspace,
@@ -108,3 +111,102 @@ class TestRestoreTaskWorkspace:
         assert restored.repo_root == str(source_repo)
         assert restored.effective_cwd == str(worktree_path / "src")
         assert restored.lock_owner == lock_owner
+
+    def test_scan_fallback_chooses_match_for_callers_repo(self, tmp_path: Path) -> None:
+        worktree_root = tmp_path / "worktrees"
+        foreign_worktree = worktree_root / "repo-b" / "orch_test"
+        caller_worktree = worktree_root / "repo-a" / "orch_test"
+        caller_repo = tmp_path / "repos" / "repo-a"
+        foreign_repo = tmp_path / "repos" / "repo-b"
+        source_dir = caller_repo / "src"
+
+        foreign_worktree.mkdir(parents=True)
+        caller_worktree.mkdir(parents=True)
+        source_dir.mkdir(parents=True)
+
+        lock_owner = {"pid": 4321}
+
+        def fake_common_repo_root(path: Path) -> Path:
+            resolved = path.resolve()
+            if resolved == caller_worktree.resolve():
+                return caller_repo
+            if resolved == foreign_worktree.resolve():
+                return foreign_repo
+            raise AssertionError(f"unexpected path: {path}")
+
+        with (
+            patch("ouroboros.core.worktree._worktree_root", return_value=worktree_root),
+            patch(
+                "ouroboros.core.worktree._resolve_common_repo_root",
+                side_effect=fake_common_repo_root,
+            ),
+            patch("ouroboros.core.worktree._resolve_repo_root", return_value=caller_repo),
+            patch("ouroboros.core.worktree._acquire_lock", return_value=lock_owner),
+        ):
+            restored = restore_task_workspace(
+                "orch_test",
+                persisted=None,
+                fallback_source_cwd=source_dir,
+            )
+
+        assert restored.repo_root == str(caller_repo)
+        assert restored.worktree_path == str(caller_worktree)
+        assert restored.effective_cwd == str(caller_worktree / "src")
+        assert restored.lock_owner == lock_owner
+
+    def test_scan_fallback_ignores_foreign_repo_and_prepares_new_workspace(
+        self, tmp_path: Path
+    ) -> None:
+        worktree_root = tmp_path / "worktrees"
+        foreign_worktree = worktree_root / "repo-b" / "orch_test"
+        caller_repo = tmp_path / "repos" / "repo-a"
+        foreign_repo = tmp_path / "repos" / "repo-b"
+        source_dir = caller_repo / "src"
+
+        foreign_worktree.mkdir(parents=True)
+        source_dir.mkdir(parents=True)
+        prepared_workspace = _workspace(tmp_path)
+
+        with (
+            patch("ouroboros.core.worktree._worktree_root", return_value=worktree_root),
+            patch("ouroboros.core.worktree._resolve_common_repo_root", return_value=foreign_repo),
+            patch("ouroboros.core.worktree._resolve_repo_root", return_value=caller_repo),
+            patch(
+                "ouroboros.core.worktree.prepare_task_workspace",
+                return_value=prepared_workspace,
+            ) as prepare_mock,
+        ):
+            restored = restore_task_workspace(
+                "orch_test",
+                persisted=None,
+                fallback_source_cwd=source_dir,
+            )
+
+        assert restored == prepared_workspace
+        prepare_mock.assert_called_once_with(source_dir, "orch_test", allow_dirty=False)
+
+    def test_scan_fallback_raises_for_multiple_matches_in_same_repo(self, tmp_path: Path) -> None:
+        worktree_root = tmp_path / "worktrees"
+        first_worktree = worktree_root / "repo-a" / "orch_test"
+        second_worktree = worktree_root / "repo-b" / "orch_test"
+        caller_repo = tmp_path / "repos" / "repo-a"
+        source_dir = caller_repo / "src"
+
+        first_worktree.mkdir(parents=True)
+        second_worktree.mkdir(parents=True)
+        source_dir.mkdir(parents=True)
+
+        with (
+            patch("ouroboros.core.worktree._worktree_root", return_value=worktree_root),
+            patch("ouroboros.core.worktree._resolve_common_repo_root", return_value=caller_repo),
+            patch("ouroboros.core.worktree._resolve_repo_root", return_value=caller_repo),
+        ):
+            with patch("ouroboros.core.worktree.prepare_task_workspace") as prepare_mock:
+                with pytest.raises(WorktreeError, match="Multiple managed worktrees"):
+                    restore_task_workspace(
+                        "orch_test",
+                        persisted=None,
+                        fallback_source_cwd=source_dir,
+                    )
+
+        prepare_mock.assert_not_called()

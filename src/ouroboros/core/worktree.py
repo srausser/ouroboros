@@ -431,25 +431,42 @@ def restore_task_workspace(
             lock_owner=owner,
         )
 
+    if fallback_source_cwd is None:
+        raise WorktreeError(
+            "Cannot restore task workspace without persisted metadata or source cwd",
+            details={"durable_id": durable_id},
+        )
+
+    source_dir = Path(fallback_source_cwd).expanduser().resolve()
     root = _worktree_root()
-    matches = list(root.glob(f"*/{durable_id}"))
-    if len(matches) == 1:
-        worktree_path = matches[0].resolve()
-        repo_root = _resolve_common_repo_root(worktree_path)
+    caller_repo_root = _resolve_repo_root(source_dir)
+
+    repo_matches: list[tuple[Path, Path]] = []
+    for match in root.glob(f"*/{durable_id}"):
+        worktree_path = match.resolve()
+        try:
+            match_repo_root = _resolve_common_repo_root(worktree_path)
+        except WorktreeError:
+            continue
+        if match_repo_root == caller_repo_root:
+            repo_matches.append((worktree_path, match_repo_root))
+
+    if len(repo_matches) > 1:
+        raise WorktreeError(
+            "Multiple managed worktrees found for durable task",
+            details={
+                "durable_id": durable_id,
+                "repo_root": str(caller_repo_root),
+                "matches": [str(match[0]) for match in repo_matches],
+            },
+        )
+
+    if len(repo_matches) == 1:
+        worktree_path, repo_root = repo_matches[0]
         repo_name = worktree_path.parent.name
         branch = f"ooo/{durable_id}"
         lock = _lock_path(repo_name, durable_id)
-        source_dir = (
-            Path(fallback_source_cwd).expanduser().resolve()
-            if fallback_source_cwd
-            else worktree_path
-        )
-        effective_cwd = worktree_path
-        try:
-            original_repo_root = _resolve_repo_root(source_dir)
-            effective_cwd = worktree_path / _relative_subdir(original_repo_root, source_dir)
-        except WorktreeError:
-            effective_cwd = worktree_path
+        effective_cwd = worktree_path / _relative_subdir(caller_repo_root, source_dir)
         workspace = TaskWorkspace(
             durable_id=durable_id,
             repo_root=str(repo_root),
@@ -471,12 +488,6 @@ def restore_task_workspace(
             branch=workspace.branch,
             lock_path=workspace.lock_path,
             lock_owner=owner,
-        )
-
-    if fallback_source_cwd is None:
-        raise WorktreeError(
-            "Cannot restore task workspace without persisted metadata or source cwd",
-            details={"durable_id": durable_id},
         )
 
     return prepare_task_workspace(fallback_source_cwd, durable_id, allow_dirty=allow_dirty)
