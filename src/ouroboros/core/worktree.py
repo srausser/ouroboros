@@ -135,6 +135,17 @@ def _resolve_repo_root(start_path: Path) -> Path:
     return Path(repo_root).resolve()
 
 
+def is_git_repo(start_path: str | Path) -> bool:
+    """Return True when the given path resolves inside a git repository."""
+    path = Path(start_path).expanduser().resolve()
+    probe = path if path.is_dir() else path.parent
+    try:
+        _run_git(["rev-parse", "--show-toplevel"], probe)
+    except WorktreeError:
+        return False
+    return True
+
+
 def _resolve_common_repo_root(start_path: Path) -> Path:
     path = start_path.expanduser().resolve()
     probe = path if path.is_dir() else path.parent
@@ -429,7 +440,9 @@ def restore_task_workspace(
         branch = f"ooo/{durable_id}"
         lock = _lock_path(repo_name, durable_id)
         source_dir = (
-            Path(fallback_source_cwd).expanduser().resolve() if fallback_source_cwd else worktree_path
+            Path(fallback_source_cwd).expanduser().resolve()
+            if fallback_source_cwd
+            else worktree_path
         )
         effective_cwd = worktree_path
         try:

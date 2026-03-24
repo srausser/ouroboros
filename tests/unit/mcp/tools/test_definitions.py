@@ -533,6 +533,52 @@ class TestExecuteSeedHandler:
         assert inherited_handle.approval_mode == "bypassPermissions"
         assert inherited_handle.metadata["fork_session"] is True
         assert runner_kwargs["inherited_tools"] == ["Read", "mcp__chrome-devtools__click"]
+<<<<<<< HEAD
+=======
+        assert runner_kwargs["task_cwd"] == TEST_WORKSPACE.effective_cwd
+        assert runner_kwargs["task_workspace"] == TEST_WORKSPACE
+
+    async def test_handle_runs_without_workspace_when_worktrees_disabled(self) -> None:
+        """Config-disabled executions should skip task workspace provisioning."""
+        mock_event_store = AsyncMock()
+        mock_event_store.initialize = AsyncMock()
+        mock_runner = MagicMock()
+        mock_runner.execute_seed = AsyncMock(
+            return_value=Result.ok(
+                OrchestratorResult(
+                    success=True,
+                    session_id="orch_nowt",
+                    execution_id="exec_nowt",
+                    final_message="Done",
+                )
+            )
+        )
+
+        with (
+            patch("ouroboros.mcp.tools.definitions.EventStore", return_value=mock_event_store),
+            patch(
+                "ouroboros.mcp.tools.definitions.maybe_prepare_task_workspace", return_value=None
+            ),
+            patch(
+                "ouroboros.mcp.tools.definitions.OrchestratorRunner",
+                return_value=mock_runner,
+            ) as runner_cls,
+        ):
+            handler = ExecuteSeedHandler()
+            result = await handler.handle(
+                {
+                    "seed_content": VALID_SEED_YAML,
+                    "skip_qa": True,
+                },
+                execution_id="exec_nowt",
+                session_id_override="orch_nowt",
+            )
+
+        assert result.is_ok
+        runner_kwargs = runner_cls.call_args.kwargs
+        assert runner_kwargs["task_cwd"] is None
+        assert runner_kwargs["task_workspace"] is None
+>>>>>>> a809cb3 (Fix evolve-step workspace cleanup)
 
 
 class TestSessionStatusHandler:

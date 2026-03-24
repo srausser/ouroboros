@@ -137,7 +137,14 @@ class TestExecuteSeedHandlerQA:
             patch("ouroboros.mcp.tools.execution_handlers.create_agent_runtime"),
             patch("ouroboros.mcp.tools.execution_handlers.EventStore") as mock_es_cls,
             patch(
+<<<<<<< HEAD
                 "ouroboros.mcp.tools.execution_handlers.OrchestratorRunner",
+=======
+                "ouroboros.mcp.tools.definitions.maybe_prepare_task_workspace", return_value=None
+            ),
+            patch(
+                "ouroboros.mcp.tools.definitions.OrchestratorRunner",
+>>>>>>> a809cb3 (Fix evolve-step workspace cleanup)
                 return_value=mock_runner,
             ),
             patch(
@@ -178,7 +185,14 @@ class TestExecuteSeedHandlerQA:
             patch("ouroboros.mcp.tools.execution_handlers.create_agent_runtime"),
             patch("ouroboros.mcp.tools.execution_handlers.EventStore") as mock_es_cls,
             patch(
+<<<<<<< HEAD
                 "ouroboros.mcp.tools.execution_handlers.OrchestratorRunner",
+=======
+                "ouroboros.mcp.tools.definitions.maybe_prepare_task_workspace", return_value=None
+            ),
+            patch(
+                "ouroboros.mcp.tools.definitions.OrchestratorRunner",
+>>>>>>> a809cb3 (Fix evolve-step workspace cleanup)
                 return_value=mock_runner,
             ),
             patch(
@@ -209,7 +223,14 @@ class TestExecuteSeedHandlerQA:
             patch("ouroboros.mcp.tools.execution_handlers.create_agent_runtime"),
             patch("ouroboros.mcp.tools.execution_handlers.EventStore") as mock_es_cls,
             patch(
+<<<<<<< HEAD
                 "ouroboros.mcp.tools.execution_handlers.OrchestratorRunner",
+=======
+                "ouroboros.mcp.tools.definitions.maybe_prepare_task_workspace", return_value=None
+            ),
+            patch(
+                "ouroboros.mcp.tools.definitions.OrchestratorRunner",
+>>>>>>> a809cb3 (Fix evolve-step workspace cleanup)
                 return_value=mock_runner,
             ),
             patch(
@@ -245,7 +266,14 @@ class TestExecuteSeedHandlerQA:
             patch("ouroboros.mcp.tools.execution_handlers.create_agent_runtime"),
             patch("ouroboros.mcp.tools.execution_handlers.EventStore") as mock_es_cls,
             patch(
+<<<<<<< HEAD
                 "ouroboros.mcp.tools.execution_handlers.OrchestratorRunner",
+=======
+                "ouroboros.mcp.tools.definitions.maybe_prepare_task_workspace", return_value=None
+            ),
+            patch(
+                "ouroboros.mcp.tools.definitions.OrchestratorRunner",
+>>>>>>> a809cb3 (Fix evolve-step workspace cleanup)
                 return_value=mock_runner,
             ),
             patch(
