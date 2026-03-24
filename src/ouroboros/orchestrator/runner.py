@@ -31,6 +31,7 @@ from rich.text import Text
 
 from ouroboros.core.errors import OuroborosError
 from ouroboros.core.types import Result
+from ouroboros.core.worktree import TaskWorkspace, heartbeat_lock, release_lock
 from ouroboros.observability.drift import DriftMeasurement
 from ouroboros.observability.logging import get_logger
 from ouroboros.orchestrator.adapter import (
@@ -321,6 +322,8 @@ class OrchestratorRunner:
         enable_decomposition: bool = True,
         inherited_runtime_handle: RuntimeHandle | None = None,
         inherited_tools: list[str] | None = None,
+        task_cwd: str | None = None,
+        task_workspace: TaskWorkspace | None = None,
     ) -> None:
         """Initialize orchestrator runner.
 
@@ -339,6 +342,8 @@ class OrchestratorRunner:
                         delegated child executions that should fork a session.
             inherited_tools: Optional effective tool set inherited from a
                         delegating parent session.
+            task_cwd: Explicit working directory override for task execution metadata.
+            task_workspace: Managed task workspace metadata for persistence and cleanup.
         """
         self._adapter = adapter
         self._event_store = event_store
@@ -350,6 +355,8 @@ class OrchestratorRunner:
         self._enable_decomposition = enable_decomposition
         self._inherited_runtime_handle = inherited_runtime_handle
         self._inherited_tools = list(inherited_tools) if inherited_tools else None
+        self._task_cwd = task_cwd
+        self._task_workspace = task_workspace
         # Track active session for external cancellation by execution_id
         self._active_sessions: dict[str, str] = {}  # execution_id -> session_id
 
@@ -453,7 +460,7 @@ class OrchestratorRunner:
         if tool_catalog is not None:
             metadata["tool_catalog"] = serialize_tool_catalog(tool_catalog)
 
-        cwd = self._adapter.working_directory
+        cwd = self._effective_cwd(runtime_handle)
         approval_mode = self._adapter.permission_mode
 
         if runtime_handle is not None:
@@ -489,6 +496,27 @@ class OrchestratorRunner:
             updated_at=datetime.now(UTC).isoformat(),
             metadata=metadata,
         )
+
+    def _task_summary(self) -> dict[str, Any]:
+        """Return summary metadata for the active task workspace."""
+        if self._task_workspace is None:
+            return {}
+        return {
+            "worktree_path": self._task_workspace.worktree_path,
+            "worktree_branch": self._task_workspace.branch,
+            "task_cwd": self._task_workspace.effective_cwd,
+        }
+
+    def _effective_cwd(self, runtime_handle: RuntimeHandle | None = None) -> str | None:
+        """Resolve the effective cwd for persisted runtime metadata."""
+        if self._task_cwd:
+            return self._task_cwd
+        if self._task_workspace is not None:
+            return self._task_workspace.effective_cwd
+        if runtime_handle is not None and runtime_handle.cwd:
+            return runtime_handle.cwd
+        cwd = self._adapter.working_directory
+        return cwd if isinstance(cwd, str) and cwd else None
 
     def _normalized_message_type(self, message: AgentMessage) -> str:
         """Collapse runtime-specific message details into shared progress categories."""
@@ -546,6 +574,8 @@ class OrchestratorRunner:
                 progress["runtime_event_type"] = runtime_event_type
             if runtime_handle.backend == "claude" and runtime_handle.native_session_id:
                 progress["agent_session_id"] = runtime_handle.native_session_id
+        if self._task_workspace is not None:
+            progress["workspace"] = self._task_workspace.to_progress_dict()
 
         return progress
 
@@ -665,6 +695,8 @@ class OrchestratorRunner:
         progress: dict[str, Any],
     ) -> None:
         """Persist session progress without interrupting execution on failure."""
+        if self._task_workspace is not None:
+            heartbeat_lock(self._task_workspace.lock_path)
         result = await self._session_repo.track_progress(session_id, progress)
         if result.is_err:
             log.warning(
@@ -1026,6 +1058,8 @@ class OrchestratorRunner:
 
         # Clean up session tracking
         self._unregister_session(execution_id, session_id)
+        if self._task_workspace is not None:
+            release_lock(self._task_workspace.lock_path)
 
         # Only mark cancelled if not already in a terminal state
         session_result = await self._session_repo.reconstruct_session(session_id)
@@ -1057,7 +1091,7 @@ class OrchestratorRunner:
                 success=False,
                 session_id=session_id,
                 execution_id=execution_id,
-                summary={"cancelled": True},
+                summary={"cancelled": True, **self._task_summary()},
                 messages_processed=messages_processed,
                 final_message="Execution cancelled by external request",
                 duration_seconds=duration,
@@ -1124,7 +1158,20 @@ class OrchestratorRunner:
                 )
             )
 
-        return Result.ok(session_result.value)
+        tracker = session_result.value
+        if self._task_workspace is not None:
+            progress_result = await self._session_repo.track_progress(
+                tracker.session_id,
+                {"workspace": self._task_workspace.to_progress_dict()},
+            )
+            if progress_result.is_err:
+                log.warning(
+                    "orchestrator.runner.workspace_progress_seed_failed",
+                    session_id=tracker.session_id,
+                    error=str(progress_result.error),
+                )
+
+        return Result.ok(tracker)
 
     async def execute_precreated_session(
         self,
@@ -1358,6 +1405,7 @@ class OrchestratorRunner:
                 completion_summary = {
                     "final_message": final_message[:500],
                     "messages_processed": messages_processed,
+                    **self._task_summary(),
                 }
                 completed_event = create_session_completed_event(
                     session_id=tracker.session_id,
@@ -1410,6 +1458,8 @@ class OrchestratorRunner:
 
             # Clean up session tracking
             self._unregister_session(exec_id, tracker.session_id)
+            if self._task_workspace is not None:
+                release_lock(self._task_workspace.lock_path)
 
             return Result.ok(
                 OrchestratorResult(
@@ -1419,6 +1469,7 @@ class OrchestratorRunner:
                     summary={
                         "goal": seed.goal,
                         "acceptance_criteria_count": len(seed.acceptance_criteria),
+                        **self._task_summary(),
                     },
                     messages_processed=messages_processed,
                     final_message=final_message,
@@ -1435,6 +1486,8 @@ class OrchestratorRunner:
 
             # Clean up session tracking
             self._unregister_session(exec_id, tracker.session_id)
+            if self._task_workspace is not None:
+                release_lock(self._task_workspace.lock_path)
 
             # Emit failure event
             failed_event = create_session_failed_event(
@@ -1553,6 +1606,7 @@ class OrchestratorRunner:
             console=self._console,
             enable_decomposition=self._enable_decomposition,
             inherited_runtime_handle=self._inherited_runtime_handle,
+            task_cwd=self._effective_cwd(),
         )
 
         # Check for cancellation before starting parallel execution
@@ -1608,6 +1662,7 @@ class OrchestratorRunner:
             "skipped_count": parallel_result.skipped_count,
             "total_levels": execution_plan.total_stages,
             "verification_report": verification_report,
+            **self._task_summary(),
         }
 
         # Emit completion event
@@ -1672,6 +1727,8 @@ class OrchestratorRunner:
         # Clean up session tracking
         self._unregister_session(exec_id, tracker.session_id)
         await clear_cancellation(tracker.session_id)
+        if self._task_workspace is not None:
+            release_lock(self._task_workspace.lock_path)
 
         return Result.ok(
             OrchestratorResult(
@@ -1901,7 +1958,10 @@ Note: This is a resumed session. Please continue from where execution was interr
             if success:
                 await self._session_repo.mark_completed(
                     session_id,
-                    {"messages_processed": messages_processed},
+                    {
+                        "messages_processed": messages_processed,
+                        **self._task_summary(),
+                    },
                 )
                 self._console.print(
                     Panel(
@@ -1933,13 +1993,15 @@ Note: This is a resumed session. Please continue from where execution was interr
 
             # Clean up session tracking
             self._unregister_session(tracker.execution_id, session_id)
+            if self._task_workspace is not None:
+                release_lock(self._task_workspace.lock_path)
 
             return Result.ok(
                 OrchestratorResult(
                     success=success,
                     session_id=session_id,
                     execution_id=tracker.execution_id,
-                    summary={"resumed": True},
+                    summary={"resumed": True, **self._task_summary()},
                     messages_processed=messages_processed,
                     final_message=final_message,
                     duration_seconds=duration,
@@ -1955,6 +2017,8 @@ Note: This is a resumed session. Please continue from where execution was interr
 
             # Clean up session tracking
             self._unregister_session(tracker.execution_id, session_id)
+            if self._task_workspace is not None:
+                release_lock(self._task_workspace.lock_path)
 
             return Result.err(
                 OrchestratorError(

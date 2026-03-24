@@ -706,21 +706,8 @@ def create_ouroboros_server(
     execution_model = os.environ.get("OUROBOROS_EXECUTION_MODEL")
     if execution_model is None and resolved_runtime_backend == "claude":
         execution_model = "claude-sonnet-4-6"
-    agent_adapter = create_agent_runtime(
-        backend=resolved_runtime_backend,
-        model=execution_model,
-        cwd=Path.cwd(),
-        llm_backend=llm_backend,
-    )
     # Use stderr console: in MCP stdio mode, stdout is the JSON-RPC channel.
     # Any non-protocol output on stdout corrupts the MCP communication.
-    evolution_runner = OrchestratorRunner(
-        adapter=agent_adapter,
-        event_store=event_store,
-        console=Console(stderr=True),
-        debug=False,
-        enable_decomposition=True,
-    )
     # Stage 1 (mechanical checks: lint/build/test) can be enabled via env var.
     # Disabled by default to reduce latency per generation step.
     evolve_stage1 = os.environ.get("OUROBOROS_EVOLVE_STAGE1", "false").lower() == "true"
@@ -748,6 +735,20 @@ def create_ouroboros_server(
 
     async def _evolution_executor(seed: Any, *, parallel: bool = True) -> Any:
         await _ensure_evolution_store_initialized()
+        task_cwd = evolutionary_loop.get_project_dir()
+        runner_adapter = create_agent_runtime(
+            backend=resolved_runtime_backend,
+            model=execution_model,
+            cwd=task_cwd or Path.cwd(),
+            llm_backend=llm_backend,
+        )
+        evolution_runner = OrchestratorRunner(
+            adapter=runner_adapter,
+            event_store=event_store,
+            console=Console(stderr=True),
+            debug=False,
+            enable_decomposition=True,
+        )
         return await evolution_runner.execute_seed(
             seed=seed,
             execution_id=None,

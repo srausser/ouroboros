@@ -8,6 +8,7 @@ import asyncio
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any
+from uuid import uuid4
 
 import click
 import typer
@@ -20,6 +21,7 @@ if TYPE_CHECKING:
 from ouroboros.cli.formatters import console
 from ouroboros.cli.formatters.panels import print_error, print_info, print_success, print_warning
 from ouroboros.core.security import InputValidator
+from ouroboros.core.worktree import TaskWorkspace, WorktreeError, prepare_task_workspace, restore_task_workspace
 
 
 class _DefaultWorkflowGroup(typer.core.TyperGroup):
@@ -180,6 +182,7 @@ async def _run_orchestrator(
     """
     from ouroboros.core.seed import Seed
     from ouroboros.orchestrator import OrchestratorRunner, create_agent_runtime
+    from ouroboros.orchestrator.session import SessionRepository
     from ouroboros.persistence.event_store import EventStore
 
     # Load seed
@@ -210,9 +213,42 @@ async def _run_orchestrator(
     event_store = EventStore(f"sqlite+aiosqlite:///{db_path}")
     await event_store.initialize()
 
+    session_repo = SessionRepository(event_store)
+    workspace: TaskWorkspace | None = None
+    execution_id: str | None = None
+    session_id_for_run: str | None = None
+
+    try:
+        if resume_session:
+            reconstructed = await session_repo.reconstruct_session(resume_session)
+            if reconstructed.is_err:
+                print_error(f"Failed to reconstruct session: {reconstructed.error}")
+                raise typer.Exit(1)
+            persisted = TaskWorkspace.from_progress_dict(
+                reconstructed.value.progress.get("workspace")
+            )
+            workspace = restore_task_workspace(
+                resume_session,
+                persisted,
+                fallback_source_cwd=Path.cwd(),
+            )
+            session_id_for_run = resume_session
+            execution_id = reconstructed.value.execution_id
+        else:
+            session_id_for_run = f"orch_{uuid4().hex[:12]}"
+            execution_id = f"exec_{uuid4().hex[:12]}"
+            workspace = prepare_task_workspace(Path.cwd(), session_id_for_run)
+    except WorktreeError as e:
+        print_error(f"Task workspace error: {e.message}")
+        raise typer.Exit(1) from e
+
+    if workspace is not None:
+        print_info(f"Task worktree: {workspace.worktree_path}")
+        print_info(f"Task branch: {workspace.branch}")
+
     adapter = create_agent_runtime(
         backend=runtime_backend,
-        cwd=Path.cwd(),
+        cwd=Path(workspace.effective_cwd) if workspace else Path.cwd(),
     )
     runner = OrchestratorRunner(
         adapter,
@@ -221,6 +257,7 @@ async def _run_orchestrator(
         mcp_manager=mcp_manager,
         mcp_tool_prefix=mcp_tool_prefix,
         debug=debug,
+        task_workspace=workspace,
     )
 
     # Execute
@@ -236,7 +273,12 @@ async def _run_orchestrator(
                 print_info("Parallel mode: independent ACs will run concurrently")
             else:
                 print_info("Sequential mode: ACs will run one at a time")
-            result = await runner.execute_seed(seed, parallel=parallel)
+            result = await runner.execute_seed(
+                seed,
+                execution_id=execution_id,
+                session_id=session_id_for_run,
+                parallel=parallel,
+            )
 
         # Handle result
         if result.is_ok:
