@@ -146,6 +146,13 @@ def is_git_repo(start_path: str | Path) -> bool:
     return True
 
 
+def _try_resolve_repo_root(start_path: str | Path) -> Path | None:
+    try:
+        return _resolve_repo_root(Path(start_path))
+    except WorktreeError:
+        return None
+
+
 def _resolve_common_repo_root(start_path: Path) -> Path:
     path = start_path.expanduser().resolve()
     probe = path if path.is_dir() else path.parent
@@ -172,6 +179,10 @@ def _ensure_clean_checkout(repo_root: Path) -> None:
             "Cannot start task worktree from a dirty checkout",
             details={"repo_root": str(repo_root)},
         )
+
+
+def _checkout_is_dirty(repo_root: Path) -> bool:
+    return bool(_run_git(["status", "--porcelain"], repo_root))
 
 
 def _list_worktrees(repo_root: Path) -> dict[str, dict[str, str]]:
@@ -502,6 +513,11 @@ def maybe_prepare_task_workspace(
     """Provision a task workspace only when worktrees are enabled."""
     if not _worktrees_enabled():
         return None
+    repo_root = _try_resolve_repo_root(source_cwd)
+    if repo_root is None:
+        return None
+    if allow_dirty and _checkout_is_dirty(repo_root):
+        return None
     return prepare_task_workspace(source_cwd, durable_id, allow_dirty=allow_dirty)
 
 
@@ -515,6 +531,11 @@ def maybe_restore_task_workspace(
     """Restore or bootstrap a task workspace when worktrees are enabled."""
     if persisted is None and not _worktrees_enabled():
         return None
+    if persisted is None:
+        if fallback_source_cwd is None:
+            return None
+        if _try_resolve_repo_root(fallback_source_cwd) is None:
+            return None
     return restore_task_workspace(
         durable_id,
         persisted,

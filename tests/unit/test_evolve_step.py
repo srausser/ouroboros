@@ -763,6 +763,41 @@ class TestEvolveStepHandler:
         assert loop.get_project_dir() is None
 
     @pytest.mark.asyncio
+    async def test_handler_without_project_dir_succeeds_outside_git_repo(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """Handler should still run when server cwd is not a git repo."""
+        from ouroboros.mcp.tools.definitions import EvolveStepHandler
+
+        monkeypatch.chdir(tmp_path)
+
+        store = await create_event_store()
+        seed = make_seed()
+
+        gen_result = GenerationResult(
+            generation_number=1,
+            seed=seed,
+            evaluation_summary=make_eval_summary(),
+            phase=GenerationPhase.COMPLETED,
+            success=True,
+        )
+        loop = make_loop(store, gen_result=gen_result)
+        handler = EvolveStepHandler(evolutionary_loop=loop)
+
+        import yaml
+
+        result = await handler.handle(
+            {
+                "lineage_id": "lin_handler_non_git_cwd",
+                "seed_content": yaml.dump(seed.to_dict()),
+                "skip_qa": True,
+            }
+        )
+
+        assert result.is_ok
+        assert loop.get_project_dir() is None
+
+    @pytest.mark.asyncio
     async def test_handler_no_loop_returns_error(self) -> None:
         """Handler without evolutionary_loop returns error."""
         from ouroboros.mcp.tools.definitions import EvolveStepHandler

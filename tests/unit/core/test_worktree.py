@@ -42,6 +42,30 @@ class TestMaybePrepareTaskWorkspace:
         assert result is None
         prepare_mock.assert_not_called()
 
+    def test_returns_none_when_source_cwd_is_not_git_repo(self, tmp_path: Path) -> None:
+        with (
+            patch("ouroboros.core.worktree._worktrees_enabled", return_value=True),
+            patch("ouroboros.core.worktree._try_resolve_repo_root", return_value=None),
+            patch("ouroboros.core.worktree.prepare_task_workspace") as prepare_mock,
+        ):
+            result = maybe_prepare_task_workspace(tmp_path, "orch_test")
+
+        assert result is None
+        prepare_mock.assert_not_called()
+
+    def test_returns_none_for_dirty_delegated_parent_workspace(self, tmp_path: Path) -> None:
+        repo_root = tmp_path / "repo"
+        with (
+            patch("ouroboros.core.worktree._worktrees_enabled", return_value=True),
+            patch("ouroboros.core.worktree._try_resolve_repo_root", return_value=repo_root),
+            patch("ouroboros.core.worktree._checkout_is_dirty", return_value=True),
+            patch("ouroboros.core.worktree.prepare_task_workspace") as prepare_mock,
+        ):
+            result = maybe_prepare_task_workspace(tmp_path, "orch_test", allow_dirty=True)
+
+        assert result is None
+        prepare_mock.assert_not_called()
+
 
 class TestMaybeRestoreTaskWorkspace:
     """Tests for config-gated workspace restoration."""
@@ -49,6 +73,23 @@ class TestMaybeRestoreTaskWorkspace:
     def test_returns_none_for_new_workspace_when_disabled(self, tmp_path: Path) -> None:
         with (
             patch("ouroboros.core.worktree._worktrees_enabled", return_value=False),
+            patch("ouroboros.core.worktree.restore_task_workspace") as restore_mock,
+        ):
+            result = maybe_restore_task_workspace(
+                "orch_test",
+                persisted=None,
+                fallback_source_cwd=tmp_path,
+            )
+
+        assert result is None
+        restore_mock.assert_not_called()
+
+    def test_returns_none_for_new_workspace_when_source_cwd_is_not_git_repo(
+        self, tmp_path: Path
+    ) -> None:
+        with (
+            patch("ouroboros.core.worktree._worktrees_enabled", return_value=True),
+            patch("ouroboros.core.worktree._try_resolve_repo_root", return_value=None),
             patch("ouroboros.core.worktree.restore_task_workspace") as restore_mock,
         ):
             result = maybe_restore_task_workspace(
