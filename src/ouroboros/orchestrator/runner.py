@@ -1164,6 +1164,8 @@ class OrchestratorRunner:
         )
 
         if session_result.is_err:
+            if self._task_workspace is not None:
+                release_lock(self._task_workspace.lock_path)
             return Result.err(
                 OrchestratorError(
                     message=f"Failed to create session: {session_result.error}",

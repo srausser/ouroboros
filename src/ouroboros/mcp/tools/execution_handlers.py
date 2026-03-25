@@ -289,11 +289,8 @@ class ExecuteSeedHandler:
 
         # Use injected or create orchestrator dependencies
         try:
-            from ouroboros.orchestrator.runtime_factory import resolve_agent_runtime_backend
-            from ouroboros.providers.factory import resolve_llm_backend
-
-            runtime_backend = resolve_agent_runtime_backend(self.agent_runtime_backend)
-            resolved_llm_backend = resolve_llm_backend(self.llm_backend)
+            runtime_backend = self.agent_runtime_backend
+            resolved_llm_backend = self.llm_backend or "default"
             event_store = self.event_store or EventStore()
             owns_event_store = self.event_store is None
             await event_store.initialize()
@@ -372,6 +369,15 @@ class ExecuteSeedHandler:
                         if delegated_permission_mode
                         else {}
                     ),
+                )
+                runtime_backend_attr = getattr(agent_adapter, "runtime_backend", None)
+                if not (isinstance(runtime_backend_attr, str) and runtime_backend_attr):
+                    runtime_backend_attr = getattr(agent_adapter, "_runtime_backend", None)
+                effective_runtime_backend = (
+                    runtime_backend_attr
+                    if isinstance(runtime_backend_attr, str) and runtime_backend_attr
+                    else runtime_backend
+                    or "unknown"
                 )
 
                 # Create orchestrator runner
@@ -496,7 +502,7 @@ class ExecuteSeedHandler:
                     f"Session ID: {tracker.session_id}\n"
                     f"Execution ID: {tracker.execution_id}\n"
                     f"Goal: {seed.goal}\n\n"
-                    f"Runtime Backend: {runtime_backend}\n"
+                    f"Runtime Backend: {effective_runtime_backend}\n"
                     f"LLM Backend: {resolved_llm_backend}\n"
                 )
                 if workspace is not None:
@@ -516,7 +522,7 @@ class ExecuteSeedHandler:
                     "execution_id": tracker.execution_id,
                     "launched": True,
                     "status": "running",
-                    "runtime_backend": runtime_backend,
+                    "runtime_backend": effective_runtime_backend,
                     "llm_backend": resolved_llm_backend,
                     "resume_requested": is_resume,
                 }

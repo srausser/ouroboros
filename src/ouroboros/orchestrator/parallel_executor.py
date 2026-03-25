@@ -2335,6 +2335,12 @@ Respond with either "ATOMIC" or the JSON array only, nothing else.
 
     async def _wait_for_memory(self, label: str) -> None:
         """Block until system has enough free memory to spawn a subprocess."""
+        requires_memory_gate = getattr(self._adapter, "_requires_memory_gate", None)
+        if not isinstance(requires_memory_gate, bool):
+            requires_memory_gate = False
+        if not requires_memory_gate:
+            return
+
         elapsed = 0.0
         while elapsed < _MEMORY_WAIT_MAX_SECONDS:
             available_gb = _get_available_memory_gb()

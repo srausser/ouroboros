@@ -538,7 +538,12 @@ def maybe_prepare_task_workspace(
         return None
     if allow_dirty and _checkout_is_dirty(repo_root):
         return None
-    return prepare_task_workspace(source_cwd, durable_id, allow_dirty=allow_dirty)
+    try:
+        return prepare_task_workspace(source_cwd, durable_id, allow_dirty=allow_dirty)
+    except WorktreeError as exc:
+        if exc.message == "Cannot start task worktree from a dirty checkout":
+            return None
+        raise
 
 
 def maybe_restore_task_workspace(
@@ -556,9 +561,14 @@ def maybe_restore_task_workspace(
             return None
         if _try_resolve_repo_root(fallback_source_cwd) is None:
             return None
-    return restore_task_workspace(
-        durable_id,
-        persisted,
-        fallback_source_cwd=fallback_source_cwd,
-        allow_dirty=allow_dirty,
-    )
+    try:
+        return restore_task_workspace(
+            durable_id,
+            persisted,
+            fallback_source_cwd=fallback_source_cwd,
+            allow_dirty=allow_dirty,
+        )
+    except WorktreeError as exc:
+        if exc.message == "Cannot start task worktree from a dirty checkout":
+            return None
+        raise

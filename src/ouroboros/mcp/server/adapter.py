@@ -652,6 +652,16 @@ def create_ouroboros_server(
 
     resolved_runtime_backend = resolve_agent_runtime_backend(runtime_backend)
 
+    # Materialize the default runtime once at server creation so backend wiring
+    # is validated up front and composition-root tests can assert the selected
+    # runtime backend without waiting for a tool invocation.
+    create_agent_runtime(
+        backend=resolved_runtime_backend,
+        model=None,
+        cwd=Path.cwd(),
+        llm_backend=llm_backend,
+    )
+
     # Create shared LLM adapter for interview/seed/evaluation paths.
     llm_adapter = create_llm_adapter(
         backend=llm_backend,
