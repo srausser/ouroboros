@@ -29,6 +29,28 @@ app = typer.Typer(
 )
 
 
+def _create_pm_litellm_adapter() -> Any:
+    """Construct the PM interview adapter or raise actionable guidance.
+
+    The PM CLI currently relies on the LiteLLM-backed path. On base installs
+    without the optional ``litellm`` extra, importing the adapter crashes with
+    ``ModuleNotFoundError``. Convert that into a user-facing error instead.
+    """
+    try:
+        from ouroboros.providers.litellm_adapter import LiteLLMAdapter
+    except ModuleNotFoundError as exc:
+        if exc.name == "litellm":
+            msg = (
+                "PM interviews require the optional LiteLLM dependency. "
+                "Reinstall with `ouroboros-ai[litellm]`, or if you use uv tool: "
+                "`uv tool install --force --with litellm ouroboros-ai`."
+            )
+            raise RuntimeError(msg) from exc
+        raise
+
+    return LiteLLMAdapter()
+
+
 @app.callback(invoke_without_command=True)
 def pm_command(
     ctx: typer.Context,
@@ -316,9 +338,12 @@ async def _run_pm_interview(
         output_dir: Optional output directory for the generated PM document.
     """
     from ouroboros.bigbang.pm_interview import PMInterviewEngine
-    from ouroboros.providers.litellm_adapter import LiteLLMAdapter
 
-    adapter = LiteLLMAdapter()
+    try:
+        adapter = _create_pm_litellm_adapter()
+    except RuntimeError as exc:
+        print_error(str(exc))
+        raise typer.Exit(code=1) from exc
     engine = PMInterviewEngine.create(llm_adapter=adapter, model=model)
 
     # Check for existing PM seeds before starting a new session
