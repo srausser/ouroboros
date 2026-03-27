@@ -20,6 +20,7 @@ from ouroboros.bigbang.interview import InterviewRound
 from ouroboros.cli.formatters import console
 from ouroboros.cli.formatters.panels import print_error, print_info, print_success, print_warning
 from ouroboros.core.types import Result
+from ouroboros.observability.logging import is_console_logging_enabled, set_console_logging
 
 app = typer.Typer(
     name="pm",
@@ -91,18 +92,24 @@ def pm_command(
 
     console.print(f"  Model: [dim]{model}[/]\n")
 
+    previous_console_logging = is_console_logging_enabled()
+    set_console_logging(debug)
+
     try:
-        asyncio.run(
-            _run_pm_interview(
-                resume_id=resume,
-                model=model,
-                debug=debug,
-                output_dir=output,
+        try:
+            asyncio.run(
+                _run_pm_interview(
+                    resume_id=resume,
+                    model=model,
+                    debug=debug,
+                    output_dir=output,
+                )
             )
-        )
-    except KeyboardInterrupt:
-        print_info("\nPM interview interrupted. Progress has been saved.")
-        raise typer.Exit(code=0)
+        except KeyboardInterrupt:
+            print_info("\nPM interview interrupted. Progress has been saved.")
+            raise typer.Exit(code=0)
+    finally:
+        set_console_logging(previous_console_logging)
 
 
 def _load_brownfield_from_db() -> list[dict[str, str]]:
@@ -369,6 +376,7 @@ async def _run_pm_interview(
             print_error("No response provided. Exiting.")
             raise typer.Exit(code=1)
 
+        print_info("Starting interview...")
         state_result = await engine.ask_opening_and_start(
             user_response=user_answer,
             brownfield_repos=brownfield_repos if brownfield_repos else None,
@@ -388,6 +396,7 @@ async def _run_pm_interview(
         if state.rounds and state.rounds[-1].user_response is None:
             question = state.rounds[-1].question
         else:
+            print_info("Generating next question...")
             q_result = await engine.ask_next_question(state)
             if q_result.is_err:
                 print_error(f"Question generation failed: {q_result.error}")
