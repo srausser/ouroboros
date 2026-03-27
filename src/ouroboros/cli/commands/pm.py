@@ -13,6 +13,9 @@ import asyncio
 from pathlib import Path
 from typing import Annotated, Any
 
+from prompt_toolkit import PromptSession
+from prompt_toolkit.key_binding import KeyBindings, KeyPressEvent
+from prompt_toolkit.patch_stdout import patch_stdout
 from rich.prompt import Confirm, Prompt
 import typer
 
@@ -20,7 +23,6 @@ from ouroboros.bigbang.interview import InterviewRound
 from ouroboros.cli.formatters import console
 from ouroboros.cli.formatters.panels import print_error, print_info, print_success, print_warning
 from ouroboros.core.types import Result
-from ouroboros.observability.logging import is_console_logging_enabled, set_console_logging
 
 app = typer.Typer(
     name="pm",
@@ -92,24 +94,18 @@ def pm_command(
 
     console.print(f"  Model: [dim]{model}[/]\n")
 
-    previous_console_logging = is_console_logging_enabled()
-    set_console_logging(debug)
-
     try:
-        try:
-            asyncio.run(
-                _run_pm_interview(
-                    resume_id=resume,
-                    model=model,
-                    debug=debug,
-                    output_dir=output,
-                )
+        asyncio.run(
+            _run_pm_interview(
+                resume_id=resume,
+                model=model,
+                debug=debug,
+                output_dir=output,
             )
-        except KeyboardInterrupt:
-            print_info("\nPM interview interrupted. Progress has been saved.")
-            raise typer.Exit(code=0)
-    finally:
-        set_console_logging(previous_console_logging)
+        )
+    except KeyboardInterrupt:
+        print_info("\nPM interview interrupted. Progress has been saved.")
+        raise typer.Exit(code=0)
 
 
 def _load_brownfield_from_db() -> list[dict[str, str]]:
@@ -305,6 +301,31 @@ def _save_cli_pm_meta(session_id: str, engine: Any) -> None:
     meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+async def _multiline_prompt_async(prompt_text: str = "Your response") -> str:
+    """Get multiline-safe PM input while allowing logs to render above the prompt."""
+    bindings = KeyBindings()
+
+    @bindings.add("c-j")
+    def insert_newline(event: KeyPressEvent) -> None:
+        event.current_buffer.insert_text("\n")
+
+    @bindings.add("c-m")
+    def submit(event: KeyPressEvent) -> None:
+        event.current_buffer.validate_and_handle()
+
+    console.print(f"[bold green]{prompt_text}[/] [dim](Enter: submit, Ctrl+J: newline)[/]")
+
+    session: PromptSession[str] = PromptSession(
+        message="> ",
+        multiline=True,
+        prompt_continuation="  ",
+        key_bindings=bindings,
+    )
+
+    with patch_stdout(raw=True):
+        return await session.prompt_async()
+
+
 async def _run_pm_interview(
     resume_id: str | None,
     model: str,
@@ -370,7 +391,7 @@ async def _run_pm_interview(
         opening = engine.get_opening_question()
         console.print(f"\n[bold yellow]?[/] {opening}\n")
 
-        user_answer = console.input("[bold green]> [/]")
+        user_answer = await _multiline_prompt_async()
 
         if not user_answer.strip():
             print_error("No response provided. Exiting.")
@@ -428,7 +449,7 @@ async def _run_pm_interview(
             break
         _save_cli_pm_meta(state.interview_id, engine)
 
-        user_response = console.input("[bold green]> [/]")
+        user_response = await _multiline_prompt_async()
 
         # Allow early exit
         if user_response.strip().lower() in ("done", "exit", "quit", "/done"):

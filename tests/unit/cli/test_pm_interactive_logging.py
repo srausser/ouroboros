@@ -1,7 +1,8 @@
-"""Unit tests for interactive PM logging behavior."""
+"""Unit tests for interactive PM prompt behavior."""
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -10,17 +11,8 @@ import pytest
 import typer
 
 from ouroboros.bigbang.interview import InterviewRound
-from ouroboros.cli.commands.pm import _run_pm_interview, pm_command
+from ouroboros.cli.commands.pm import _multiline_prompt_async, _run_pm_interview, pm_command
 from ouroboros.core.types import Result
-from ouroboros.observability.logging import is_console_logging_enabled, set_console_logging
-
-
-@pytest.fixture(autouse=True)
-def reset_console_logging() -> None:
-    """Reset console logging state around each test."""
-    set_console_logging(True)
-    yield
-    set_console_logging(True)
 
 
 def _build_ctx() -> MagicMock:
@@ -51,43 +43,10 @@ def _build_state(*, pending_question: str | None = None) -> SimpleNamespace:
     )
 
 
-def test_pm_command_disables_console_logging_by_default_and_restores_state() -> None:
-    """Default PM sessions should suppress console logs only while they run."""
-    observed: list[bool] = []
+def test_pm_command_exits_cleanly_on_keyboard_interrupt() -> None:
+    """The PM command should surface Ctrl+C as a normal CLI exit."""
 
     def fake_run(coro: object) -> None:
-        observed.append(is_console_logging_enabled())
-        coro.close()  # type: ignore[union-attr]
-
-    with patch("ouroboros.cli.commands.pm.asyncio.run", side_effect=fake_run):
-        pm_command(_build_ctx(), model="test-model", debug=False)
-
-    assert observed == [False]
-    assert is_console_logging_enabled() is True
-
-
-def test_pm_command_enables_console_logging_in_debug_and_restores_state() -> None:
-    """Debug PM sessions should force console logs on during the run."""
-    observed: list[bool] = []
-    set_console_logging(False)
-
-    def fake_run(coro: object) -> None:
-        observed.append(is_console_logging_enabled())
-        coro.close()  # type: ignore[union-attr]
-
-    with patch("ouroboros.cli.commands.pm.asyncio.run", side_effect=fake_run):
-        pm_command(_build_ctx(), model="test-model", debug=True)
-
-    assert observed == [True]
-    assert is_console_logging_enabled() is False
-
-
-def test_pm_command_restores_console_logging_on_keyboard_interrupt() -> None:
-    """Console logging should be restored even if the PM session is interrupted."""
-    observed: list[bool] = []
-
-    def fake_run(coro: object) -> None:
-        observed.append(is_console_logging_enabled())
         coro.close()  # type: ignore[union-attr]
         raise KeyboardInterrupt
 
@@ -96,13 +55,41 @@ def test_pm_command_restores_console_logging_on_keyboard_interrupt() -> None:
             pm_command(_build_ctx(), model="test-model", debug=False)
 
     assert exc_info.value.exit_code == 0
-    assert observed == [False]
-    assert is_console_logging_enabled() is True
 
 
 @pytest.mark.asyncio
-async def test_run_pm_interview_new_session_shows_progress_messages(tmp_path: Path) -> None:
-    """New PM sessions should show progress around startup and question generation."""
+async def test_multiline_prompt_async_uses_prompt_toolkit_with_patch_stdout() -> None:
+    """PM input should use a multiline prompt that proxies stdout/stderr safely."""
+    session = MagicMock()
+    session.prompt_async = AsyncMock(return_value="line 1\nline 2")
+
+    with (
+        patch("ouroboros.cli.commands.pm.PromptSession", return_value=session) as mock_session,
+        patch("ouroboros.cli.commands.pm.patch_stdout", return_value=nullcontext()) as mock_patch,
+        patch("ouroboros.cli.commands.pm.console.print"),
+    ):
+        result = await _multiline_prompt_async("Prompt here")
+
+    assert result == "line 1\nline 2"
+    mock_patch.assert_called_once_with(raw=True)
+    session.prompt_async.assert_awaited_once()
+
+    kwargs = mock_session.call_args.kwargs
+    assert kwargs["message"] == "> "
+    assert kwargs["multiline"] is True
+    assert kwargs["prompt_continuation"] == "  "
+
+    key_bindings = kwargs["key_bindings"]
+    bound_keys = {tuple(binding.keys) for binding in key_bindings.bindings}
+    assert ("c-j",) in bound_keys
+    assert ("c-m",) in bound_keys
+
+
+@pytest.mark.asyncio
+async def test_run_pm_interview_new_session_uses_multiline_prompt_and_shows_progress(
+    tmp_path: Path,
+) -> None:
+    """New PM sessions should use the multiline prompt for both answers."""
     state = _build_state()
     engine = MagicMock()
     engine.get_opening_question.return_value = "What do you want to build?"
@@ -121,7 +108,11 @@ async def test_run_pm_interview_new_session_shows_progress_messages(tmp_path: Pa
         patch("ouroboros.cli.commands.pm._load_brownfield_from_db", return_value=[]),
         patch("ouroboros.cli.commands.pm._select_repos", return_value=[]),
         patch("ouroboros.cli.commands.pm._save_cli_pm_meta"),
-        patch("ouroboros.cli.commands.pm.console.input", side_effect=["Initial context", "done"]),
+        patch(
+            "ouroboros.cli.commands.pm._multiline_prompt_async",
+            side_effect=["Initial context", "done"],
+        ) as mock_prompt,
+        patch("ouroboros.cli.commands.pm.console.input") as mock_console_input,
         patch("ouroboros.cli.commands.pm.print_info") as mock_print_info,
         patch("ouroboros.cli.commands.pm.print_success"),
     ):
@@ -129,6 +120,9 @@ async def test_run_pm_interview_new_session_shows_progress_messages(tmp_path: Pa
 
     engine.ask_opening_and_start.assert_awaited_once()
     engine.ask_next_question.assert_awaited_once_with(state)
+    assert mock_prompt.await_count == 2
+    mock_console_input.assert_not_called()
+
     messages = [call.args[0] for call in mock_print_info.call_args_list]
     assert "Starting interview..." in messages
     assert "Generating next question..." in messages
@@ -139,7 +133,7 @@ async def test_run_pm_interview_new_session_shows_progress_messages(tmp_path: Pa
 async def test_run_pm_interview_resume_with_pending_question_skips_generation_message(
     tmp_path: Path,
 ) -> None:
-    """Resume should not show generation progress when a saved question already exists."""
+    """Resume should reuse the saved pending question instead of generating a new one."""
     state = _build_state(pending_question="Saved question?")
     engine = MagicMock()
     engine.load_state = AsyncMock(return_value=Result.ok(state))
@@ -154,7 +148,10 @@ async def test_run_pm_interview_resume_with_pending_question_skips_generation_me
         patch("ouroboros.providers.litellm_adapter.LiteLLMAdapter", return_value=object()),
         patch("ouroboros.bigbang.pm_interview.PMInterviewEngine.create", return_value=engine),
         patch("ouroboros.cli.commands.pm._save_cli_pm_meta"),
-        patch("ouroboros.cli.commands.pm.console.input", side_effect=["done"]),
+        patch(
+            "ouroboros.cli.commands.pm._multiline_prompt_async", return_value="done"
+        ) as mock_prompt,
+        patch("ouroboros.cli.commands.pm.console.input") as mock_console_input,
         patch("ouroboros.cli.commands.pm.print_info") as mock_print_info,
         patch("ouroboros.cli.commands.pm.print_success"),
     ):
@@ -162,5 +159,8 @@ async def test_run_pm_interview_resume_with_pending_question_skips_generation_me
 
     engine.ask_next_question.assert_not_awaited()
     engine._install_pm_steering.assert_called_once()
+    mock_prompt.assert_awaited_once()
+    mock_console_input.assert_not_called()
+
     messages = [call.args[0] for call in mock_print_info.call_args_list]
     assert "Generating next question..." not in messages
