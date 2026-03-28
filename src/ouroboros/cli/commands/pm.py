@@ -473,6 +473,20 @@ async def _run_pm_interview(
             pm_dir = Path(output_dir) if output_dir else Path.cwd() / ".ouroboros"
             pm_path = save_pm_document(seed, output_dir=pm_dir)
             print_success(f"PM document saved: {pm_path}")
+
+            print_info(
+                "The PM seed is a handoff artifact for the dev interview, not the runnable Seed."
+            )
+            print_info(f"Next: ouroboros init start {seed_path}")
+
+            continue_to_dev = Confirm.ask(
+                "Continue into the dev interview now?",
+                default=True,
+            )
+            if continue_to_dev:
+                from ouroboros.cli.commands.init import _run_interview
+
+                await _run_interview(str(seed_path))
         else:
             print_error(f"Failed to generate PM: {seed_result.error}")
     elif state.rounds and not state.is_complete:

@@ -1056,6 +1056,10 @@ class PMInterviewHandler:
         # Save human-readable pm.md to {cwd}/.ouroboros/ (consistent with CLI path)
         pm_output_dir = Path(cwd) / ".ouroboros"
         pm_path = save_pm_document(seed, output_dir=pm_output_dir)
+        next_step = (
+            f"Run 'ooo interview {seed_path}' to continue into the dev interview. "
+            "The runnable Seed is generated after that dev interview completes."
+        )
 
         return Result.ok(
             MCPToolResult(
@@ -1064,9 +1068,12 @@ class PMInterviewHandler:
                         type=ContentType.TEXT,
                         text=(
                             f"PM seed generated: {seed.product_name}\n"
-                            f"Seed: {seed_path}\n"
+                            f"PM seed: {seed_path}\n"
                             f"PM document: {pm_path}\n\n"
-                            f"Decide-later items: {len(seed.deferred_items) + len(seed.decide_later_items)}"
+                            "This PM seed is a handoff artifact for the dev interview, "
+                            "not the runnable Seed.\n"
+                            f"Decide-later items: {len(seed.deferred_items) + len(seed.decide_later_items)}\n"
+                            f"Next: {next_step}"
                         ),
                     ),
                 ),
@@ -1074,8 +1081,11 @@ class PMInterviewHandler:
                 meta={
                     "session_id": session_id,
                     "seed_path": str(seed_path),
+                    "pm_seed_path": str(seed_path),
                     "pm_path": str(pm_path),
-                    "next_step": f"Run 'ooo interview' to start a dev interview using {pm_path} as context",
+                    "artifact_kind": "pm_seed",
+                    "runnable": False,
+                    "next_step": next_step,
                 },
             )
         )
