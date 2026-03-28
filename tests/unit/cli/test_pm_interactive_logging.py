@@ -57,6 +57,26 @@ def test_pm_command_exits_cleanly_on_keyboard_interrupt() -> None:
     assert exc_info.value.exit_code == 0
 
 
+def test_pm_command_enables_debug_logging_when_requested() -> None:
+    """The PM debug flag should enable verbose logging for the session."""
+
+    def fake_run(coro: object) -> None:
+        coro.close()  # type: ignore[union-attr]
+
+    with (
+        patch("ouroboros.cli.commands.pm.asyncio.run", side_effect=fake_run),
+        patch("ouroboros.cli.commands.pm.configure_logging") as mock_configure,
+        patch("ouroboros.cli.commands.pm.print_info") as mock_print_info,
+    ):
+        pm_command(_build_ctx(), model="test-model", debug=True)
+
+    mock_configure.assert_called_once()
+    config = mock_configure.call_args.args[0]
+    assert config.log_level == "DEBUG"
+    messages = [call.args[0] for call in mock_print_info.call_args_list]
+    assert "Debug mode enabled - showing verbose logs" in messages
+
+
 @pytest.mark.asyncio
 async def test_multiline_prompt_async_uses_prompt_toolkit_with_patch_stdout() -> None:
     """PM input should use a multiline prompt that proxies stdout/stderr safely."""

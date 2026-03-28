@@ -23,6 +23,7 @@ from ouroboros.bigbang.interview import InterviewRound
 from ouroboros.cli.formatters import console
 from ouroboros.cli.formatters.panels import print_error, print_info, print_success, print_warning
 from ouroboros.core.types import Result
+from ouroboros.observability import LoggingConfig, configure_logging
 
 app = typer.Typer(
     name="pm",
@@ -84,6 +85,10 @@ def pm_command(
     """
     if ctx.invoked_subcommand is not None:
         return
+
+    if debug:
+        configure_logging(LoggingConfig(log_level="DEBUG"))
+        print_info("Debug mode enabled - showing verbose logs")
 
     console.print("\n[bold cyan]Ouroboros PM Generator[/] - Product Requirements Document\n")
 
