@@ -355,6 +355,25 @@ class TestSessionRepository:
         assert event.data["error"] == "Connection lost"
 
     @pytest.mark.asyncio
+    async def test_mark_paused(
+        self,
+        repository: SessionRepository,
+        mock_event_store: AsyncMock,
+    ) -> None:
+        """Test marking session as paused."""
+        result = await repository.mark_paused(
+            session_id="sess_123",
+            reason="Codex resume failed before reconnect",
+            resume_hint="Retry with --resume after fixing the CLI issue.",
+        )
+
+        assert result.is_ok
+        event = mock_event_store.append.call_args[0][0]
+        assert event.type == "orchestrator.session.paused"
+        assert event.data["reason"] == "Codex resume failed before reconnect"
+        assert event.data["resume_hint"] == "Retry with --resume after fixing the CLI issue."
+
+    @pytest.mark.asyncio
     async def test_mark_cancelled(
         self,
         repository: SessionRepository,
