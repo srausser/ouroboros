@@ -298,6 +298,19 @@ def _save_cli_pm_meta(session_id: str, engine: Any) -> None:
     meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+async def _continue_into_dev_interview(seed_path: Path) -> None:
+    """Resolve a PM artifact path into interview context and start the dev interview."""
+    from ouroboros.cli.commands.init import _run_interview
+    from ouroboros.core.initial_context import resolve_initial_context_input
+
+    resolved_context = resolve_initial_context_input(str(seed_path), cwd=Path.cwd())
+    if resolved_context.is_err:
+        print_error(f"Failed to load PM seed for dev interview: {resolved_context.error.message}")
+        raise typer.Exit(code=1)
+
+    await _run_interview(resolved_context.value)
+
+
 async def _run_pm_interview(
     resume_id: str | None,
     model: str,
@@ -484,9 +497,7 @@ async def _run_pm_interview(
                 default=True,
             )
             if continue_to_dev:
-                from ouroboros.cli.commands.init import _run_interview
-
-                await _run_interview(str(seed_path))
+                await _continue_into_dev_interview(seed_path)
         else:
             print_error(f"Failed to generate PM: {seed_result.error}")
     elif state.rounds and not state.is_complete:

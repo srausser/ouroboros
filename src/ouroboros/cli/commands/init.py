@@ -29,6 +29,8 @@ from ouroboros.cli.formatters.panels import print_error, print_info, print_succe
 from ouroboros.config import get_clarification_model
 from ouroboros.core.initial_context import (
     load_pm_seed_as_context as _load_pm_seed_as_context_result,
+)
+from ouroboros.core.initial_context import (
     resolve_initial_context_input,
 )
 from ouroboros.observability import LoggingConfig, configure_logging
