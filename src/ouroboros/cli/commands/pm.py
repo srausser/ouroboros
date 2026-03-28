@@ -13,15 +13,13 @@ import asyncio
 from pathlib import Path
 from typing import Annotated, Any
 
-from prompt_toolkit import PromptSession
-from prompt_toolkit.key_binding import KeyBindings, KeyPressEvent
-from prompt_toolkit.patch_stdout import patch_stdout
 from rich.prompt import Confirm, Prompt
 import typer
 
 from ouroboros.bigbang.interview import InterviewRound
 from ouroboros.cli.formatters import console
 from ouroboros.cli.formatters.panels import print_error, print_info, print_success, print_warning
+from ouroboros.cli.formatters.prompting import multiline_prompt_async
 from ouroboros.core.types import Result
 from ouroboros.observability import LoggingConfig, configure_logging
 
@@ -306,31 +304,6 @@ def _save_cli_pm_meta(session_id: str, engine: Any) -> None:
     meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-async def _multiline_prompt_async(prompt_text: str = "Your response") -> str:
-    """Get multiline-safe PM input while allowing logs to render above the prompt."""
-    bindings = KeyBindings()
-
-    @bindings.add("c-j")
-    def insert_newline(event: KeyPressEvent) -> None:
-        event.current_buffer.insert_text("\n")
-
-    @bindings.add("c-m")
-    def submit(event: KeyPressEvent) -> None:
-        event.current_buffer.validate_and_handle()
-
-    console.print(f"[bold green]{prompt_text}[/] [dim](Enter: submit, Ctrl+J: newline)[/]")
-
-    session: PromptSession[str] = PromptSession(
-        message="> ",
-        multiline=True,
-        prompt_continuation="  ",
-        key_bindings=bindings,
-    )
-
-    with patch_stdout(raw=True):
-        return await session.prompt_async()
-
-
 async def _run_pm_interview(
     resume_id: str | None,
     model: str,
@@ -396,7 +369,7 @@ async def _run_pm_interview(
         opening = engine.get_opening_question()
         console.print(f"\n[bold yellow]?[/] {opening}\n")
 
-        user_answer = await _multiline_prompt_async()
+        user_answer = await multiline_prompt_async("Your response")
 
         if not user_answer.strip():
             print_error("No response provided. Exiting.")
@@ -454,7 +427,7 @@ async def _run_pm_interview(
             break
         _save_cli_pm_meta(state.interview_id, engine)
 
-        user_response = await _multiline_prompt_async()
+        user_response = await multiline_prompt_async("Your response")
 
         # Allow early exit
         if user_response.strip().lower() in ("done", "exit", "quit", "/done"):
@@ -466,6 +439,8 @@ async def _run_pm_interview(
             complete_result = await engine.complete_interview(state)
             if isinstance(complete_result, Result) and complete_result.is_err:
                 print_error(f"Failed to complete interview: {complete_result.error}")
+            elif isinstance(complete_result, Result):
+                state = complete_result.value
             save_result = await engine.save_state(state)
             if isinstance(save_result, Result) and save_result.is_err:
                 print_error(f"Failed to save completed state: {save_result.error}")
@@ -481,6 +456,8 @@ async def _run_pm_interview(
         if isinstance(record_result, Result) and record_result.is_err:
             print_error(f"Failed to record response: {record_result.error}")
             break
+        if isinstance(record_result, Result):
+            state = record_result.value
         save_result = await engine.save_state(state)
         if isinstance(save_result, Result) and save_result.is_err:
             print_error(f"Failed to save state: {save_result.error}")
