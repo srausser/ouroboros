@@ -38,6 +38,8 @@ def _build_state(*, pending_question: str | None = None) -> SimpleNamespace:
         rounds=rounds,
         current_round_number=1,
         interview_id="interview_123",
+        ambiguity_score=None,
+        clear_stored_ambiguity=MagicMock(),
         mark_updated=MagicMock(),
     )
 
@@ -102,6 +104,10 @@ async def test_run_pm_interview_new_session_uses_multiline_prompt_and_shows_prog
         patch("ouroboros.cli.commands.pm._select_repos", return_value=[]),
         patch("ouroboros.cli.commands.pm._save_cli_pm_meta"),
         patch(
+            "ouroboros.cli.commands.pm.maybe_complete_pm_interview",
+            new=AsyncMock(return_value=Result.ok((recorded_state, None))),
+        ),
+        patch(
             "ouroboros.cli.commands.pm.multiline_prompt_async",
             side_effect=["Initial context", "Actual answer"],
         ) as mock_prompt,
@@ -138,6 +144,7 @@ async def test_run_pm_interview_resume_with_pending_question_skips_generation_me
     engine = MagicMock()
     engine.load_state = AsyncMock(return_value=Result.ok(state))
     engine.ask_next_question = AsyncMock()
+    engine.check_completion = AsyncMock(return_value=None)
     engine.save_state = AsyncMock(return_value=Result.ok(tmp_path / "state.json"))
     engine.complete_interview = AsyncMock(return_value=Result.ok(completed_state))
     engine.format_decide_later_summary.return_value = ""
@@ -179,6 +186,7 @@ async def test_run_pm_interview_preserves_pending_question_across_interrupt_and_
     engine.ask_next_question = AsyncMock(return_value=Result.ok("What is the first workflow?"))
     engine.save_state = AsyncMock(return_value=Result.ok(tmp_path / "state.json"))
     engine.load_state = AsyncMock(return_value=Result.ok(resumed_state))
+    engine.check_completion = AsyncMock(return_value=None)
     engine.complete_interview = AsyncMock(
         return_value=Result.ok(SimpleNamespace(**{**resumed_state.__dict__, "is_complete": True}))
     )
