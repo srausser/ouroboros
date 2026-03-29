@@ -13,6 +13,7 @@ from ouroboros.core.types import Result
 
 _PM_SEED_SUFFIXES = {".json", ".yaml", ".yml"}
 _TEXT_CONTEXT_SUFFIXES = {".md", ".markdown", ".txt", ".rst"}
+_MAX_PATH_CANDIDATE_LENGTH = 240
 
 
 def _is_pm_seed_candidate(seed_path: Path, raw_data: object) -> bool:
@@ -37,7 +38,11 @@ def _validate_pm_seed_mapping(
     has_pm_seed_filename = seed_path.stem.startswith("pm_seed_")
     has_pm_seed_id = isinstance(pm_id, str) and pm_id.startswith("pm_seed_")
 
-    if not isinstance(pm_id, str) or (not pm_id.strip()) or (not has_pm_seed_id and not has_pm_seed_filename):
+    if (
+        not isinstance(pm_id, str)
+        or (not pm_id.strip())
+        or (not has_pm_seed_id and not has_pm_seed_filename)
+    ):
         return Result.err(
             ValidationError(
                 "PM seed file must include a non-empty pm_id and either a 'pm_seed_' filename or pm_id",
@@ -65,6 +70,32 @@ def _validate_pm_seed_mapping(
         )
 
     return Result.ok(None)
+
+
+def _resolve_path_candidate(
+    context_candidate: str,
+    *,
+    cwd: str | Path | None = None,
+) -> Path | None:
+    """Return a plausible file-path candidate, or None for literal text."""
+    if "\n" in context_candidate or len(context_candidate) > _MAX_PATH_CANDIDATE_LENGTH:
+        return None
+
+    try:
+        candidate_path = Path(context_candidate).expanduser()
+    except (OSError, ValueError):
+        return None
+
+    if not candidate_path.is_absolute() and cwd is not None:
+        candidate_path = Path(cwd).expanduser() / candidate_path
+
+    try:
+        if candidate_path.exists() and candidate_path.is_file():
+            return candidate_path
+    except OSError:
+        return None
+
+    return None
 
 
 def load_pm_seed_as_context(seed_path: Path) -> Result[str, ValidationError]:
@@ -124,11 +155,8 @@ def resolve_initial_context_input(
             )
         )
 
-    candidate_path = Path(context_candidate).expanduser()
-    if not candidate_path.is_absolute() and cwd is not None:
-        candidate_path = Path(cwd).expanduser() / candidate_path
-
-    if candidate_path.exists() and candidate_path.is_file():
+    candidate_path = _resolve_path_candidate(context_candidate, cwd=cwd)
+    if candidate_path is not None:
         suffix = candidate_path.suffix.lower()
         if suffix in _PM_SEED_SUFFIXES:
             try:

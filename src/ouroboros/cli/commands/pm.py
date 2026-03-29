@@ -385,7 +385,12 @@ def _make_message_callback(debug: bool):
     return callback
 
 
-async def _continue_into_dev_interview(seed_path: Path) -> None:
+async def _continue_into_dev_interview(
+    seed_path: Path,
+    *,
+    debug: bool,
+    llm_backend: str | None,
+) -> None:
     """Resolve a PM artifact path into interview context and start the dev interview."""
     from ouroboros.cli.commands.init import _run_interview
     from ouroboros.core.initial_context import resolve_initial_context_input
@@ -395,7 +400,15 @@ async def _continue_into_dev_interview(seed_path: Path) -> None:
         print_error(f"Failed to load PM seed for dev interview: {resolved_context.error.message}")
         raise typer.Exit(code=1)
 
-    await _run_interview(resolved_context.value)
+    await _run_interview(
+        resolved_context.value,
+        resume_id=None,
+        state_dir=None,
+        use_orchestrator=False,
+        debug=debug,
+        workflow_runtime_backend=None,
+        llm_backend=llm_backend,
+    )
 
 
 async def _run_pm_interview(
@@ -692,7 +705,11 @@ async def _run_pm_interview(
                 default=True,
             )
             if continue_to_dev:
-                await _continue_into_dev_interview(seed_path)
+                await _continue_into_dev_interview(
+                    seed_path,
+                    debug=debug,
+                    llm_backend=backend,
+                )
         else:
             print_error(f"Failed to generate PM: {seed_result.error}")
     elif state.rounds and not state.is_complete:

@@ -189,7 +189,15 @@ class TestPmCliHandoff:
             )
 
         mock_resolve_initial_context.assert_called_once_with(str(seed_path), cwd=Path.cwd())
-        mock_run.assert_awaited_once_with("resolved PM seed context")
+        mock_run.assert_awaited_once_with(
+            "resolved PM seed context",
+            resume_id=None,
+            state_dir=None,
+            use_orchestrator=False,
+            debug=False,
+            workflow_runtime_backend=None,
+            llm_backend="codex",
+        )
         assert any(
             call.args and call.args[0] == f"Next: ouroboros init start {seed_path}"
             for call in mock_info.call_args_list

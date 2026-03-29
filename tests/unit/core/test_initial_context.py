@@ -107,3 +107,11 @@ class TestResolveInitialContextInput:
 
         assert result.is_ok
         assert result.value == raw_context
+
+    def test_long_literal_text_skips_path_probe(self) -> None:
+        long_context = "Build a task manager. " * 30
+
+        result = resolve_initial_context_input(long_context)
+
+        assert result.is_ok
+        assert result.value == long_context
