@@ -604,6 +604,54 @@ class SessionRepository:
                 )
             )
 
+    async def mark_paused(
+        self,
+        session_id: str,
+        reason: str,
+        resume_hint: str | None = None,
+    ) -> Result[None, PersistenceError]:
+        """Mark session as paused and resumable.
+
+        Args:
+            session_id: Session being paused.
+            reason: Why the session was paused.
+            resume_hint: Optional retry guidance.
+
+        Returns:
+            Result indicating success or failure.
+        """
+        event = BaseEvent(
+            type="orchestrator.session.paused",
+            aggregate_type="session",
+            aggregate_id=session_id,
+            data={
+                "reason": reason,
+                "resume_hint": resume_hint,
+                "paused_at": datetime.now(UTC).isoformat(),
+            },
+        )
+
+        try:
+            await self._event_store.append(event)
+            log.info(
+                "orchestrator.session.paused",
+                session_id=session_id,
+                reason=reason,
+            )
+            return Result.ok(None)
+        except Exception as e:
+            log.exception(
+                "orchestrator.session.pause_failed",
+                session_id=session_id,
+                error=str(e),
+            )
+            return Result.err(
+                PersistenceError(
+                    message=f"Failed to mark session paused: {e}",
+                    details={"session_id": session_id},
+                )
+            )
+
     async def mark_cancelled(
         self,
         session_id: str,

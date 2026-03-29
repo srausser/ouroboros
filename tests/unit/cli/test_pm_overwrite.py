@@ -160,7 +160,7 @@ class TestPmCliHandoff:
         engine.classifications = []
 
         with (
-            patch("ouroboros.providers.litellm_adapter.LiteLLMAdapter"),
+            patch("ouroboros.cli.commands.pm.create_llm_adapter", return_value=object()),
             patch("ouroboros.bigbang.pm_interview.PMInterviewEngine.create", return_value=engine),
             patch("ouroboros.cli.commands.pm._check_existing_pm_seeds", return_value=True),
             patch("ouroboros.cli.commands.pm._load_brownfield_from_db", return_value=[]),
@@ -183,6 +183,7 @@ class TestPmCliHandoff:
             await _run_pm_interview(
                 resume_id=None,
                 model="anthropic/claude-sonnet-4-20250514",
+                backend="codex",
                 debug=False,
                 output_dir=str(tmp_path),
             )

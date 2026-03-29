@@ -653,6 +653,29 @@ class OrchestratorRunner:
         }
         return event.model_copy(update={"data": event_data})
 
+    @staticmethod
+    def _is_recoverable_resume_failure(message: AgentMessage) -> bool:
+        """Return True when a final resume error should leave the session resumable."""
+        if not (message.is_final and message.is_error):
+            return False
+
+        data = message.data
+        metadata_candidates = (
+            data,
+            data.get("meta") if isinstance(data.get("meta"), dict) else None,
+            data.get("mcp_meta") if isinstance(data.get("mcp_meta"), dict) else None,
+        )
+        for metadata in metadata_candidates:
+            if not isinstance(metadata, dict):
+                continue
+            if metadata.get("recoverable") is True:
+                return True
+            if metadata.get("is_retriable") is True or metadata.get("retriable") is True:
+                return True
+
+        recovery = data.get("recovery")
+        return isinstance(recovery, dict) and recovery.get("kind") == "resume_retry"
+
     def _should_emit_progress_event(
         self,
         message: AgentMessage,
@@ -1852,6 +1875,7 @@ Note: This is a resumed session. Please continue from where execution was interr
             messages_processed = tracker.messages_processed
             final_message = ""
             success = False
+            recoverable_resume_failure = False
 
             # Create workflow state tracker for progress display
             from ouroboros.orchestrator.workflow_state import WorkflowStateTracker
@@ -1996,6 +2020,7 @@ Note: This is a resumed session. Please continue from where execution was interr
                     if message.is_final:
                         final_message = message.content
                         success = not message.is_error
+                        recoverable_resume_failure = self._is_recoverable_resume_failure(message)
 
             duration = (datetime.now(UTC) - start_time).total_seconds()
 
@@ -2012,6 +2037,21 @@ Note: This is a resumed session. Please continue from where execution was interr
                         Text(final_message[:1000], style="green"),
                         title="[green]Resumed Execution Completed[/green]",
                         border_style="green",
+                    )
+                )
+            elif recoverable_resume_failure:
+                await self._session_repo.mark_paused(
+                    session_id,
+                    reason=final_message,
+                    resume_hint=(
+                        "Retry the same --resume session after fixing the runtime/tooling issue."
+                    ),
+                )
+                self._console.print(
+                    Panel(
+                        Text(final_message[:1000], style="yellow"),
+                        title="[yellow]Resumed Execution Paused[/yellow]",
+                        border_style="yellow",
                     )
                 )
             else:

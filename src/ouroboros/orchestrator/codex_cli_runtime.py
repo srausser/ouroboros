@@ -694,13 +694,6 @@ class CodexCliRuntime:
     ) -> list[str]:
         """Build the CLI command args.  Prompt is fed via stdin separately."""
         command = [self._cli_path, "exec"]
-        if resume_session_id:
-            if not _SAFE_SESSION_ID_PATTERN.match(resume_session_id):
-                raise ValueError(
-                    f"Invalid resume_session_id: contains disallowed characters: "
-                    f"{resume_session_id!r}"
-                )
-            command.extend(["resume", resume_session_id])
 
         command.extend(
             [
@@ -718,7 +711,27 @@ class CodexCliRuntime:
             command.extend(["--model", normalized_model])
 
         command.extend(self._build_permission_args())
+        if resume_session_id:
+            if not _SAFE_SESSION_ID_PATTERN.match(resume_session_id):
+                raise ValueError(
+                    f"Invalid resume_session_id: contains disallowed characters: "
+                    f"{resume_session_id!r}"
+                )
+            command.extend(["resume", resume_session_id])
         return command
+
+    def _build_resume_retry_metadata(self, resume_session_id: str | None) -> dict[str, Any]:
+        """Return retry metadata for resume failures that happen before reconnect."""
+        if not resume_session_id:
+            return {}
+        return {
+            "recoverable": True,
+            "recovery": {
+                "kind": "resume_retry",
+                "reason": "resume_bootstrap_failed",
+                "resume_session_id": resume_session_id,
+            },
+        }
 
     def _resolve_resume_session_id(
         self,
@@ -1432,11 +1445,25 @@ class CodexCliRuntime:
 
         composed_prompt = self._compose_prompt(prompt, system_prompt, tools)
         attempted_resume_session_id = self._resolve_resume_session_id(current_handle)
-        command = self._build_command(
-            output_last_message_path=str(output_path),
-            resume_session_id=attempted_resume_session_id,
-            prompt=composed_prompt,
-        )
+        try:
+            command = self._build_command(
+                output_last_message_path=str(output_path),
+                resume_session_id=attempted_resume_session_id,
+                prompt=composed_prompt,
+            )
+        except Exception as e:
+            yield AgentMessage(
+                type="result",
+                content=f"Failed to prepare {self._display_name}: {e}",
+                data={
+                    "subtype": "error",
+                    "error_type": type(e).__name__,
+                    **self._build_resume_retry_metadata(attempted_resume_session_id),
+                },
+                resume_handle=current_handle,
+            )
+            output_path.unlink(missing_ok=True)
+            return
 
         log.info(
             f"{self._log_namespace}.task_started",
@@ -1447,6 +1474,7 @@ class CodexCliRuntime:
 
         stderr_lines: list[str] = []
         last_content = ""
+        saw_runtime_event = False
         yielded_final = False  # Track if a final (type="result") message was already emitted
         process: Any | None = None
         process_finished = False
@@ -1467,7 +1495,11 @@ class CodexCliRuntime:
             yield AgentMessage(
                 type="result",
                 content=f"{self._display_name} not found: {e}",
-                data={"subtype": "error", "error_type": type(e).__name__},
+                data={
+                    "subtype": "error",
+                    "error_type": type(e).__name__,
+                    **self._build_resume_retry_metadata(attempted_resume_session_id),
+                },
                 resume_handle=current_handle,
             )
             output_path.unlink(missing_ok=True)
@@ -1476,7 +1508,11 @@ class CodexCliRuntime:
             yield AgentMessage(
                 type="result",
                 content=f"Failed to start {self._display_name}: {e}",
-                data={"subtype": "error", "error_type": type(e).__name__},
+                data={
+                    "subtype": "error",
+                    "error_type": type(e).__name__,
+                    **self._build_resume_retry_metadata(attempted_resume_session_id),
+                },
                 resume_handle=current_handle,
             )
             output_path.unlink(missing_ok=True)
@@ -1515,6 +1551,7 @@ class CodexCliRuntime:
                     event = self._parse_json_event(line)
                     if event is None:
                         continue
+                    saw_runtime_event = True
 
                     previous_handle = current_handle
                     session_rebound = False
@@ -1652,6 +1689,8 @@ class CodexCliRuntime:
                 data["session_id"] = current_handle.native_session_id
             if returncode != 0:
                 data["error_type"] = self._runtime_error_type
+                if attempted_resume_session_id and not saw_runtime_event:
+                    data.update(self._build_resume_retry_metadata(attempted_resume_session_id))
 
             yield AgentMessage(
                 type="result",

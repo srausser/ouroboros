@@ -991,6 +991,101 @@ class TestOrchestratorRunner:
 
         assert result.is_err
 
+    @pytest.mark.asyncio
+    async def test_resume_session_recoverable_failure_marks_session_paused(
+        self,
+        runner: OrchestratorRunner,
+        mock_adapter: MagicMock,
+        sample_seed: Seed,
+    ) -> None:
+        """Recoverable resume bootstrap failures should not poison the session."""
+        running_tracker = SessionTracker.create("exec_resume", "seed_resume").with_status(
+            SessionStatus.RUNNING
+        )
+        runtime_handle = RuntimeHandle(backend="codex_cli", native_session_id="thread-123")
+
+        async def mock_execute(*args: Any, **kwargs: Any) -> AsyncIterator[AgentMessage]:
+            del args, kwargs
+            yield AgentMessage(
+                type="result",
+                content="Codex rejected the resume command",
+                data={
+                    "subtype": "error",
+                    "recoverable": True,
+                    "recovery": {"kind": "resume_retry"},
+                },
+                resume_handle=runtime_handle,
+            )
+
+        mock_adapter.execute_task = mock_execute
+
+        with (
+            patch.object(
+                runner._session_repo,
+                "reconstruct_session",
+                AsyncMock(return_value=Result.ok(running_tracker)),
+            ),
+            patch.object(
+                runner._session_repo,
+                "mark_paused",
+                AsyncMock(return_value=Result.ok(None)),
+            ) as mark_paused,
+            patch.object(
+                runner._session_repo,
+                "mark_failed",
+                AsyncMock(return_value=Result.ok(None)),
+            ) as mark_failed,
+        ):
+            result = await runner.resume_session("sess_resume", sample_seed)
+
+        assert result.is_ok
+        assert result.value.success is False
+        assert result.value.final_message == "Codex rejected the resume command"
+        mark_paused.assert_awaited_once()
+        mark_failed.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_resume_session_allows_paused_sessions(
+        self,
+        runner: OrchestratorRunner,
+        mock_adapter: MagicMock,
+        sample_seed: Seed,
+    ) -> None:
+        """Paused sessions should remain resumable."""
+        paused_tracker = SessionTracker.create("exec_resume", "seed_resume").with_status(
+            SessionStatus.PAUSED
+        )
+        runtime_handle = RuntimeHandle(backend="codex_cli", native_session_id="thread-123")
+
+        async def mock_execute(*args: Any, **kwargs: Any) -> AsyncIterator[AgentMessage]:
+            del args, kwargs
+            yield AgentMessage(
+                type="result",
+                content="Resumed successfully",
+                data={"subtype": "success"},
+                resume_handle=runtime_handle,
+            )
+
+        mock_adapter.execute_task = mock_execute
+
+        with (
+            patch.object(
+                runner._session_repo,
+                "reconstruct_session",
+                AsyncMock(return_value=Result.ok(paused_tracker)),
+            ),
+            patch.object(
+                runner._session_repo,
+                "mark_completed",
+                AsyncMock(return_value=Result.ok(None)),
+            ) as mark_completed,
+        ):
+            result = await runner.resume_session("sess_resume", sample_seed)
+
+        assert result.is_ok
+        assert result.value.success is True
+        mark_completed.assert_awaited_once()
+
     def test_deserialize_runtime_handle_supports_legacy_progress(
         self,
         runner: OrchestratorRunner,
